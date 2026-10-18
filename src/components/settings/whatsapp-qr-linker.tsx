@@ -42,7 +42,7 @@ export function WhatsAppQrLinker() {
     phoneNumber: null,
     pushName: null,
     lastError: null,
-    updatedAt: Date.now(),
+    updatedAt: 0,
   });
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -67,7 +67,6 @@ export function WhatsAppQrLinker() {
   useEffect(() => {
     let isMounted = true;
     (async () => {
-      setLoading(true);
       await fetchSession();
       if (isMounted) setLoading(false);
     })();
