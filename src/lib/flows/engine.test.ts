@@ -88,6 +88,9 @@ vi.mock("./meta-send", () => ({
 import {
   dispatchInboundToFlows,
   matchReplyId,
+  matchInteractiveReply,
+  sanitizeButtonLabel,
+  normalizeListSections,
   matchesKeywordTrigger,
   isAutoAdvancing,
   isSuspending,
@@ -186,6 +189,132 @@ describe("matchReplyId", () => {
         "x",
       ),
     ).toBeNull();
+  });
+});
+
+describe("sanitizeButtonLabel", () => {
+  it("falls back to default for empty or missing label", () => {
+    expect(sanitizeButtonLabel("")).toBe("View options");
+    expect(sanitizeButtonLabel(null)).toBe("View options");
+    expect(sanitizeButtonLabel(undefined)).toBe("View options");
+    expect(sanitizeButtonLabel("   ")).toBe("View options");
+  });
+
+  it("leaves labels <= 20 characters as is", () => {
+    expect(sanitizeButtonLabel("Main Menu")).toBe("Main Menu");
+    expect(sanitizeButtonLabel("View options")).toBe("View options");
+  });
+
+  it("cleans emoji and trailing punctuation when that brings it <= 20 chars", () => {
+    // "📋 Options Selection : " is 22 chars; cleaning emoji & colon yields "Options Selection" (17 chars <= 20)
+    expect(sanitizeButtonLabel("📋 Options Selection : ")).toBe("Options Selection");
+  });
+
+  it("clamps long labels to 20 unicode characters", () => {
+    const long = "A very very long button label that exceeds twenty characters";
+    const clamped = sanitizeButtonLabel(long);
+    expect(clamped.length).toBeLessThanOrEqual(20);
+    expect(clamped).toBe("A very very long but");
+  });
+});
+
+describe("normalizeListSections", () => {
+  it("returns a fallback section when empty", () => {
+    const norm = normalizeListSections([]);
+    expect(norm).toHaveLength(1);
+    expect(norm[0].rows).toHaveLength(1);
+  });
+
+  it("merges multiple untitled sections into a single section (so Meta allows omitting title)", () => {
+    const raw = [
+      {
+        title: "",
+        rows: [{ id: "r1", title: "T-shirts" }],
+      },
+      {
+        title: "",
+        rows: [{ id: "r2", title: "MUG" }],
+      },
+      {
+        title: "",
+        rows: [{ id: "r3", title: "Cushion" }],
+      },
+    ];
+    const norm = normalizeListSections(raw);
+    expect(norm).toHaveLength(1);
+    expect(norm[0].title).toBeUndefined();
+    expect(norm[0].rows).toHaveLength(3);
+    expect(norm[0].rows.map((r) => r.title)).toEqual([
+      "T-shirts",
+      "MUG",
+      "Cushion",
+    ]);
+  });
+
+  it("preserves section titles and clamps rows/titles to Meta limits", () => {
+    const raw = [
+      {
+        title: "Section 1 with a very long title that exceeds limits",
+        rows: [
+          {
+            id: "r1",
+            title: "Row title that exceeds 24 characters easily",
+            description: "D".repeat(100),
+          },
+        ],
+      },
+    ];
+    const norm = normalizeListSections(raw);
+    expect(norm).toHaveLength(1);
+    expect(norm[0].title!.length).toBeLessThanOrEqual(24);
+    expect(norm[0].rows[0].title.length).toBeLessThanOrEqual(24);
+    expect(norm[0].rows[0].description!.length).toBeLessThanOrEqual(72);
+  });
+});
+
+describe("matchInteractiveReply", () => {
+  const listNode = {
+    node_type: "send_list",
+    config: {
+      text: "Pick an option",
+      button_label: "Options",
+      sections: [
+        {
+          title: "Products",
+          rows: [
+            { reply_id: "row_1", title: "View Products", next_node_key: "step_products" },
+            { reply_id: "row_2", title: "Support", next_node_key: "step_support" },
+            { reply_id: "row_3", title: "Exit", next_node_key: "" },
+          ],
+        },
+      ],
+    },
+  };
+
+  it("matches tapped reply_id", () => {
+    const res = matchInteractiveReply(listNode, { reply_id: "row_1" });
+    expect(res).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+  });
+
+  it("matches typed option title (case-insensitive, trimmed)", () => {
+    const res = matchInteractiveReply(listNode, { text: "view products" });
+    expect(res).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+
+    const res2 = matchInteractiveReply(listNode, { text: "Support" });
+    expect(res2).toEqual({ next_node_key: "step_support", isTerminalChoice: false });
+  });
+
+  it("matches typed 1-based number index (1 -> first option, 2 -> second)", () => {
+    const res1 = matchInteractiveReply(listNode, { text: "1" });
+    expect(res1).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+
+    const res2 = matchInteractiveReply(listNode, { text: "2" });
+    expect(res2).toEqual({ next_node_key: "step_support", isTerminalChoice: false });
+  });
+
+  it("identifies terminal choice when next_node_key is empty", () => {
+    const res = matchInteractiveReply(listNode, { text: "3" });
+    expect(res).toEqual({ next_node_key: null, isTerminalChoice: true });
   });
 });
 

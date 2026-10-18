@@ -497,6 +497,17 @@ function validateNode(
           field: "button_label",
           message: t("sendListNeedsLabel"),
         });
+      } else if (cfg.button_label.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "button_label",
+          message: t("buttonTitleTooLong", {
+            n: 1,
+            max: INTERACTIVE_LIMITS.buttonTitleMaxLength,
+          }),
+        });
       }
       const sections = cfg.sections ?? [];
       const totalRows = sections.reduce(

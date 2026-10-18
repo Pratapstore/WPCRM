@@ -406,12 +406,16 @@ async function sendInteractiveViaMeta(
       })
       return r.messageId
     }
+    const safeLabel =
+      Array.from(input.buttonLabel.trim()).slice(0, 20).join('').trim() ||
+      'View options'
+    const safeBody = input.bodyText.trim() || 'Please choose an option:'
     const r = await sendInteractiveList({
       phoneNumberId,
       accessToken,
       to: phone,
-      bodyText: input.bodyText,
-      buttonLabel: input.buttonLabel,
+      bodyText: safeBody,
+      buttonLabel: safeLabel,
       sections: input.sections,
       headerText: input.headerText,
       footerText: input.footerText,

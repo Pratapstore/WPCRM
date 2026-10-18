@@ -12,6 +12,7 @@ import makeWASocket, {
   type WAMessage,
 } from '@whiskeysockets/baileys';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
+import { dispatchInboundToFlows } from '@/lib/flows/engine';
 
 export interface BaileysSessionState {
   status: 'idle' | 'connecting' | 'qr_ready' | 'connected' | 'disconnected';
@@ -400,4 +401,51 @@ async function handleInboundMessage(accountId: string, msg: WAMessage): Promise<
     status: 'delivered',
     created_at: nowIso,
   });
+
+  // 4. Dispatch to Flows engine
+  try {
+    let interactiveReplyId: string | null = null;
+    let replyTitle: string | null = null;
+    const anyMsg = messageContent as Record<string, any>;
+    if (anyMsg.buttonsResponseMessage?.selectedButtonId) {
+      interactiveReplyId = anyMsg.buttonsResponseMessage.selectedButtonId;
+      replyTitle = anyMsg.buttonsResponseMessage.selectedDisplayText || null;
+    } else if (anyMsg.listResponseMessage?.singleSelectReply?.selectedRowId) {
+      interactiveReplyId = anyMsg.listResponseMessage.singleSelectReply.selectedRowId;
+      replyTitle = anyMsg.listResponseMessage.singleSelectReply.title || null;
+    } else if (anyMsg.templateButtonReplyMessage?.selectedId) {
+      interactiveReplyId = anyMsg.templateButtonReplyMessage.selectedId;
+      replyTitle = anyMsg.templateButtonReplyMessage.selectedDisplayText || null;
+    }
+
+    const { data: config } = await admin
+      .from('whatsapp_config')
+      .select('user_id')
+      .eq('account_id', accountId)
+      .maybeSingle();
+
+    const configOwnerUserId = config?.user_id || 'system';
+
+    await dispatchInboundToFlows({
+      accountId,
+      userId: configOwnerUserId,
+      contactId,
+      conversationId,
+      message: interactiveReplyId
+        ? {
+            kind: 'interactive_reply',
+            reply_id: interactiveReplyId,
+            reply_title: replyTitle || text || '',
+            meta_message_id: messageId,
+          }
+        : {
+            kind: 'text',
+            text: text,
+            meta_message_id: messageId,
+          },
+      isFirstInboundMessage: existingConv === null,
+    });
+  } catch (err) {
+    console.error('[baileys] dispatchInboundToFlows error:', err);
+  }
 }

@@ -467,6 +467,7 @@ function SendListForm({
           label={t("buttonLabel")}
           value={cfg.button_label ?? ""}
           onChange={(v) => onUpdateConfig({ button_label: v })}
+          maxLength={20}
         />
         <TextRow
           label={t("footerText")}

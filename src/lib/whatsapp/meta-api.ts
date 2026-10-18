@@ -1133,14 +1133,32 @@ export async function sendInteractiveList(
     body: { text: bodyText },
     action: {
       button: buttonLabel,
-      sections: sections.map((s) => ({
-        ...(s.title ? { title: s.title } : {}),
-        rows: s.rows.map((r) => ({
-          id: r.id,
-          title: r.title,
-          ...(r.description ? { description: r.description } : {}),
-        })),
-      })),
+      sections: (() => {
+        if (sections.length > 1) {
+          const hasAnyTitle = sections.some((s) => Boolean(s.title?.trim()));
+          if (!hasAnyTitle) {
+            return [{
+              rows: sections.flatMap((s) => s.rows).map((r) => ({
+                id: r.id,
+                title: r.title,
+                ...(r.description ? { description: r.description } : {}),
+              })),
+            }];
+          }
+        }
+        return sections.map((s, idx) => ({
+          ...(s.title?.trim()
+            ? { title: s.title.trim() }
+            : sections.length > 1
+              ? { title: idx === 0 ? 'Options' : `Options ${idx + 1}` }
+              : {}),
+          rows: s.rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            ...(r.description ? { description: r.description } : {}),
+          })),
+        }));
+      })(),
     },
   }
   if (headerText) interactive.header = { type: 'text', text: headerText }

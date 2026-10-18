@@ -68,6 +68,220 @@ import {
 // ============================================================
 
 /**
+ * Sanitize / clamp button labels to 20 characters (Meta Cloud API limit).
+ * Strips leading emojis or trailing punctuation if doing so helps fit within 20 chars,
+ * and ensures an empty label safely falls back to a clean default.
+ */
+export function sanitizeButtonLabel(
+  label: string | undefined | null,
+  fallback = "View options",
+): string {
+  if (!label) return fallback;
+  const trimmed = label.trim();
+  if (!trimmed) return fallback;
+  if (trimmed.length <= 20) return trimmed;
+  // If stripping leading emoji or trailing punctuation/colons fits inside 20 chars, do so
+  const cleaned = trimmed.replace(/^[\p{Emoji}\s]+|[:\s]+$/gu, "").trim();
+  if (cleaned && cleaned.length > 0 && cleaned.length <= 20) {
+    return cleaned;
+  }
+  return Array.from(trimmed).slice(0, 20).join("").trim() || fallback;
+}
+
+export interface NormalizedListRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface NormalizedListSection {
+  title?: string;
+  rows: NormalizedListRow[];
+}
+
+/**
+ * Normalizes list sections so Meta Cloud API never rejects them with (#131009):
+ * 1. Clamps row title to 24 chars and description to 72 chars.
+ * 2. If multiple sections have empty titles (author built a single list across cards),
+ *    merges all rows into 1 single section (Meta does not require a section title for 1 section).
+ * 3. If multiple sections exist and some have titles, provides default non-empty titles for untitled ones.
+ */
+export function normalizeListSections(
+  rawSections: Array<{
+    title?: string | null;
+    rows: Array<{ id: string; title: string; description?: string | null }>;
+  }>,
+): NormalizedListSection[] {
+  if (!rawSections || rawSections.length === 0) {
+    return [{ rows: [{ id: "opt_1", title: "Option 1" }] }];
+  }
+
+  const cleanedSections = rawSections
+    .map((sec, secIdx) => {
+      const cleanRows = (sec.rows || [])
+        .filter((r) => Boolean(r && (r.title?.trim() || r.id?.trim())))
+        .map((r, rIdx) => ({
+          id: (r.id || `row_${secIdx + 1}_${rIdx + 1}`).trim().slice(0, 200),
+          title: Array.from(r.title?.trim() || `Option ${rIdx + 1}`)
+            .slice(0, 24)
+            .join(""),
+          ...(r.description?.trim()
+            ? {
+                description: Array.from(r.description.trim())
+                  .slice(0, 72)
+                  .join(""),
+              }
+            : {}),
+        }));
+      return {
+        title: sec.title?.trim()
+          ? Array.from(sec.title.trim()).slice(0, 24).join("")
+          : "",
+        rows: cleanRows,
+      };
+    })
+    .filter((sec) => sec.rows.length > 0);
+
+  if (cleanedSections.length === 0) {
+    return [{ rows: [{ id: "opt_1", title: "Option 1" }] }];
+  }
+
+  const hasAnyTitle = cleanedSections.some((s) => Boolean(s.title));
+  if (!hasAnyTitle) {
+    // Merge all rows into 1 single section — Meta allows omitting section title for 1 section!
+    const allRows = cleanedSections.flatMap((s) => s.rows).slice(0, 10);
+    return [{ rows: allRows }];
+  }
+
+  // When multiple sections exist and at least one has a title, Meta requires EVERY section to have a title.
+  return cleanedSections.slice(0, 10).map((sec, idx) => ({
+    title: sec.title || (idx === 0 ? "Options" : `Options ${idx + 1}`),
+    rows: sec.rows.slice(0, 10),
+  }));
+}
+
+export interface MatchReplyInput {
+  kind?: string;
+  reply_id?: string | null;
+  reply_title?: string | null;
+  text?: string | null;
+}
+
+export interface InteractiveMatchResult {
+  next_node_key: string | null;
+  isTerminalChoice: boolean;
+}
+
+/**
+ * Robustly matches an inbound reply against a node's interactive options:
+ * 1. Exact reply_id match (tapped buttons/rows).
+ * 2. Case-insensitive title / reply_title match.
+ * 3. Numeric 1-based index (e.g. customer types "1" or "2" for first or second option).
+ * 4. Alphanumeric normalized match (ignoring spaces & punctuation like "tshirts" vs "T-shirts ").
+ * 5. Substring / contains match for typed text.
+ */
+export function matchInteractiveReply(
+  node: { node_type: string; config: Record<string, unknown> },
+  reply: MatchReplyInput,
+): InteractiveMatchResult | null {
+  if (node.node_type === "send_buttons") {
+    const cfg = node.config as unknown as SendButtonsNodeConfig;
+    const buttons = cfg.buttons ?? [];
+    if (reply.reply_id) {
+      const hit = buttons.find((b) => b.reply_id === reply.reply_id);
+      if (hit) {
+        return {
+          next_node_key: hit.next_node_key ?? null,
+          isTerminalChoice: !hit.next_node_key,
+        };
+      }
+    }
+    const input = (reply.reply_title || reply.text || reply.reply_id || "").trim();
+    if (!input) return null;
+    const lower = input.toLowerCase();
+
+    let hit = buttons.find((b) => b.title?.trim().toLowerCase() === lower);
+    if (!hit) hit = buttons.find((b) => b.reply_id?.trim().toLowerCase() === lower);
+    if (!hit && /^\d+$/.test(input)) {
+      const idx = parseInt(input, 10) - 1;
+      if (idx >= 0 && idx < buttons.length) hit = buttons[idx];
+    }
+    if (!hit) {
+      const cleanInput = lower.replace(/[^a-z0-9]/g, "");
+      if (cleanInput.length >= 2) {
+        hit = buttons.find(
+          (b) =>
+            b.title?.toLowerCase().replace(/[^a-z0-9]/g, "") === cleanInput,
+        );
+      }
+    }
+    if (!hit && lower.length >= 3) {
+      hit = buttons.find((b) => {
+        const bt = b.title?.trim().toLowerCase();
+        return bt && (bt.includes(lower) || lower.includes(bt));
+      });
+    }
+
+    if (hit) {
+      return {
+        next_node_key: hit.next_node_key ? hit.next_node_key : null,
+        isTerminalChoice: !hit.next_node_key,
+      };
+    }
+    return null;
+  }
+
+  if (node.node_type === "send_list") {
+    const cfg = node.config as unknown as SendListNodeConfig;
+    const allRows = (cfg.sections ?? []).flatMap((s) => s.rows ?? []);
+    if (reply.reply_id) {
+      const hit = allRows.find((r) => r.reply_id === reply.reply_id);
+      if (hit) {
+        return {
+          next_node_key: hit.next_node_key ? hit.next_node_key : null,
+          isTerminalChoice: !hit.next_node_key,
+        };
+      }
+    }
+    const input = (reply.reply_title || reply.text || reply.reply_id || "").trim();
+    if (!input) return null;
+    const lower = input.toLowerCase();
+
+    let hit = allRows.find((r) => r.title?.trim().toLowerCase() === lower);
+    if (!hit) hit = allRows.find((r) => r.reply_id?.trim().toLowerCase() === lower);
+    if (!hit && /^\d+$/.test(input)) {
+      const idx = parseInt(input, 10) - 1;
+      if (idx >= 0 && idx < allRows.length) hit = allRows[idx];
+    }
+    if (!hit) {
+      const cleanInput = lower.replace(/[^a-z0-9]/g, "");
+      if (cleanInput.length >= 2) {
+        hit = allRows.find(
+          (r) =>
+            r.title?.toLowerCase().replace(/[^a-z0-9]/g, "") === cleanInput,
+        );
+      }
+    }
+    if (!hit && lower.length >= 3) {
+      hit = allRows.find((r) => {
+        const rt = r.title?.trim().toLowerCase();
+        return rt && (rt.includes(lower) || lower.includes(rt));
+      });
+    }
+
+    if (hit) {
+      return {
+        next_node_key: hit.next_node_key ? hit.next_node_key : null,
+        isTerminalChoice: !hit.next_node_key,
+      };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/**
  * Given a node + the customer's reply_id, return the next_node_key
  * to advance to, or `null` if no option matches.
  */
@@ -75,20 +289,8 @@ export function matchReplyId(
   node: { node_type: string; config: Record<string, unknown> },
   reply_id: string,
 ): string | null {
-  if (node.node_type === "send_buttons") {
-    const cfg = node.config as unknown as SendButtonsNodeConfig;
-    const hit = cfg.buttons?.find((b) => b.reply_id === reply_id);
-    return hit?.next_node_key ?? null;
-  }
-  if (node.node_type === "send_list") {
-    const cfg = node.config as unknown as SendListNodeConfig;
-    for (const section of cfg.sections ?? []) {
-      const hit = section.rows?.find((r) => r.reply_id === reply_id);
-      if (hit) return hit.next_node_key;
-    }
-    return null;
-  }
-  return null;
+  const match = matchInteractiveReply(node, { reply_id });
+  return match?.next_node_key ?? null;
 }
 
 /**
@@ -473,26 +675,39 @@ async function sendListAndSuspend(
   const cfg = node.config as unknown as SendListNodeConfig;
   // See sendButtonsAndSuspend — interpolate every visible string,
   // never the row `reply_id`.
-  const { whatsapp_message_id } = await engineSendInteractiveList({
-    accountId: run.account_id,
-    userId: run.user_id,
-    conversationId: run.conversation_id!,
-    contactId: run.contact_id!,
-    bodyText: interpolateVars(
-      cfg.text?.trim() || cfg.button_label?.trim() || "Please choose an option:",
-      run.vars,
-    ),
-    buttonLabel: interpolateVars(cfg.button_label?.trim() || "View options", run.vars),
-    headerText: interpolateOptionalVars(cfg.header_text, run.vars),
-    footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
-    sections: cfg.sections.map((s) => ({
+  const rawButtonLabel = interpolateVars(
+    cfg.button_label?.trim() || "View options",
+    run.vars,
+  );
+  const safeButtonLabel = sanitizeButtonLabel(rawButtonLabel);
+
+  const rawBody = interpolateVars(
+    cfg.text?.trim() || cfg.button_label?.trim() || "Please choose an option:",
+    run.vars,
+  );
+  const safeBodyText = rawBody.trim() || "Please choose an option:";
+
+  const safeSections = normalizeListSections(
+    (cfg.sections ?? []).map((s) => ({
       title: interpolateOptionalVars(s.title, run.vars),
-      rows: s.rows.map((r) => ({
+      rows: (s.rows ?? []).map((r) => ({
         id: r.reply_id,
         title: interpolateVars(r.title, run.vars),
         description: interpolateOptionalVars(r.description, run.vars),
       })),
     })),
+  );
+
+  const { whatsapp_message_id } = await engineSendInteractiveList({
+    accountId: run.account_id,
+    userId: run.user_id,
+    conversationId: run.conversation_id!,
+    contactId: run.contact_id!,
+    bodyText: safeBodyText,
+    buttonLabel: safeButtonLabel,
+    headerText: interpolateOptionalVars(cfg.header_text, run.vars),
+    footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
+    sections: safeSections,
   });
   await logEvent(db, run.id, "message_sent", node.node_key, {
     node_type: "send_list",
@@ -1105,40 +1320,26 @@ async function handleReplyForActiveRun(
   const currentNode = nodes.get(run.current_node_key!)!;
 
   // Two ways a reply can advance:
-  //   1. Interactive button/list tap on a send_buttons/send_list node.
+  //   1. Interactive button/list tap (or typed title/index) on a send_buttons/send_list node.
   //   2. Text reply on a collect_input node — capture into vars.
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
   let isTerminalChoice = false;
   if (
-    message.kind === "interactive_reply" &&
-    (currentNode.node_type === "send_buttons" ||
-      currentNode.node_type === "send_list")
+    currentNode.node_type === "send_buttons" ||
+    currentNode.node_type === "send_list"
   ) {
-    if (currentNode.node_type === "send_buttons") {
-      const cfg = currentNode.config as unknown as SendButtonsNodeConfig;
-      const hit = cfg.buttons?.find((b) => b.reply_id === message.reply_id);
-      if (hit) {
-        if (hit.next_node_key) {
-          matched = hit.next_node_key;
-        } else {
-          isTerminalChoice = true;
-        }
-      }
-    } else {
-      const cfg = currentNode.config as unknown as SendListNodeConfig;
-      for (const section of cfg.sections ?? []) {
-        const hit = section.rows?.find((r) => r.reply_id === message.reply_id);
-        if (hit) {
-          if (hit.next_node_key) {
-            matched = hit.next_node_key;
-          } else {
-            isTerminalChoice = true;
-          }
-          break;
-        }
-      }
+    const replyMatch = matchInteractiveReply(currentNode, {
+      kind: message.kind,
+      reply_id: message.kind === "interactive_reply" ? message.reply_id : null,
+      reply_title:
+        message.kind === "interactive_reply" ? message.reply_title : null,
+      text: message.kind === "text" ? message.text : null,
+    });
+    if (replyMatch) {
+      matched = replyMatch.next_node_key;
+      isTerminalChoice = replyMatch.isTerminalChoice;
     }
   } else if (
     message.kind === "text" &&
