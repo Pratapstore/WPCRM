@@ -40,6 +40,10 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
+import {
+  getBaileysSession,
+  sendBaileysMessage,
+} from '@/lib/whatsapp/baileys-service';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
 import { applyPendingMessageStatuses } from '@/lib/whatsapp/message-status-sync';
 import type { MessageTemplate } from '@/types';
@@ -258,37 +262,56 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
+  const baileysSession = getBaileysSession(accountId);
+  const isBaileysActive = baileysSession.status === 'connected';
 
-  if (configError || !config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  // WhatsApp config, account-scoped.
+  let config: any = null;
+  let accessToken = '';
+
+  if (!isBaileysActive) {
+    const { data: cfg, error: configError } = await db
+      .from('whatsapp_config')
+      .select('*')
+      .eq('account_id', accountId)
+      .single();
+
+    if (configError || !cfg) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured. Please set up your WhatsApp integration first.',
+        400
+      );
+    }
+    config = cfg;
   }
 
-  const accessToken = decrypt(config.access_token);
-
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
+  if (config?.access_token) {
+    try {
+      accessToken = decrypt(config.access_token);
+      if (isLegacyFormat(config.access_token)) {
+        void db
+          .from('whatsapp_config')
+          .update({ access_token: encrypt(accessToken) })
+          .eq('id', config.id)
+          .then(({ error }: { error: { message: string } | null }) => {
+            if (error) {
+              console.warn(
+                '[send-message] access_token GCM upgrade failed:',
+                error.message
+              );
+            }
+          });
+      }
+    } catch {
+      if (!isBaileysActive) {
+        throw new SendMessageError(
+          'whatsapp_not_configured',
+          'Failed to decrypt WhatsApp access token',
+          500
+        );
+      }
+    }
   }
 
   // Resolve the reply target to its Meta message_id. The parent must
@@ -344,6 +367,14 @@ export async function sendMessageToConversation(
   }
 
   const attempt = async (phone: string): Promise<string> => {
+    if (isBaileysActive) {
+      const res = await sendBaileysMessage(accountId, phone, {
+        text: contentText || undefined,
+        mediaUrl: mediaUrl || undefined,
+        caption: contentText || undefined,
+      });
+      return res.messageId;
+    }
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,

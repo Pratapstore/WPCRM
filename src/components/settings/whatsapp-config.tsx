@@ -13,7 +13,10 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  QrCode,
+  Globe,
 } from 'lucide-react';
+import { WhatsAppQrLinker } from './whatsapp-qr-linker';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
@@ -83,6 +86,7 @@ export function WhatsAppConfig() {
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
+  const [connectionMode, setConnectionMode] = useState<'qr' | 'cloud_api'>('qr');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
   // Structured details of the last failed Meta call (health check or
@@ -545,6 +549,47 @@ export function WhatsAppConfig() {
         title={t("title")}
         description={t("description")}
       />
+
+      {/* Connection Mode Switcher Tabs */}
+      <div className="flex p-1.5 mb-6 rounded-xl bg-muted/60 border border-border max-w-lg">
+        <button
+          type="button"
+          onClick={() => setConnectionMode('qr')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 text-sm font-medium rounded-lg transition-all ${
+            connectionMode === 'qr'
+              ? 'bg-card text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <QrCode className="size-4 text-primary" />
+          <span>Link Devices (Scan QR)</span>
+          <span className="text-[10px] bg-primary/10 text-primary font-semibold px-1.5 py-0.5 rounded">
+            Fast
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setConnectionMode('cloud_api')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 text-sm font-medium rounded-lg transition-all ${
+            connectionMode === 'cloud_api'
+              ? 'bg-card text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Globe className="size-4 text-emerald-400" />
+          <span>Meta Cloud API</span>
+          {isRegistered && (
+            <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-semibold px-1.5 py-0.5 rounded">
+              Verified
+            </span>
+          )}
+        </button>
+      </div>
+
+      {connectionMode === 'qr' ? (
+        <WhatsAppQrLinker />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
@@ -1068,6 +1113,7 @@ export function WhatsAppConfig() {
         </Card>
       </div>
     </div>
+    )}
     </section>
   );
 }
