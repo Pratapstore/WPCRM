@@ -1546,7 +1546,9 @@
     "validation": {
       "noIssues": "문제가 없습니다. 활성화할 준비가 되었습니다.",
       "summary": "오류 {errorCount}건, 경고 {warningCount}건",
-      "jumpToNode": "{key} 노드로 이동"
+      "jumpToNode": "{key} 노드로 이동",
+      "showDetails": "세부정보 보기",
+      "hideDetails": "세부정보 숨기기"
     },
     "editorState": {
       "saved": "저장되었습니다.",

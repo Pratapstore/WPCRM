@@ -388,7 +388,15 @@ async function findEntryFlow(
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       const cfg = flow.trigger_config as KeywordTriggerConfig;
-      if (candidates.some((text) => matchesKeywordTrigger(text, cfg))) {
+      const keywords =
+        Array.isArray(cfg?.keywords) && cfg.keywords.length > 0
+          ? cfg.keywords
+          : [flow.name.toLowerCase().trim()];
+      if (
+        candidates.some((text) =>
+          matchesKeywordTrigger(text, { ...cfg, keywords }),
+        )
+      ) {
         return flow;
       }
     } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
@@ -429,7 +437,7 @@ async function sendButtonsAndSuspend(
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: interpolateVars(cfg.text, run.vars),
+    bodyText: interpolateVars(cfg.text?.trim() || "Please choose an option:", run.vars),
     headerText: interpolateOptionalVars(cfg.header_text, run.vars),
     footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
     buttons: cfg.buttons.map((b) => ({
@@ -470,8 +478,11 @@ async function sendListAndSuspend(
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: interpolateVars(cfg.text, run.vars),
-    buttonLabel: interpolateVars(cfg.button_label, run.vars),
+    bodyText: interpolateVars(
+      cfg.text?.trim() || cfg.button_label?.trim() || "Please choose an option:",
+      run.vars,
+    ),
+    buttonLabel: interpolateVars(cfg.button_label?.trim() || "View options", run.vars),
     headerText: interpolateOptionalVars(cfg.header_text, run.vars),
     footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
     sections: cfg.sections.map((s) => ({
@@ -644,10 +655,10 @@ async function advanceFromNodeKey(
   let currentKey: string | null = startNodeKey;
   for (let safety = 0; safety < MAX_NODES_PER_ADVANCE; safety += 1) {
     if (!currentKey) {
-      await logEvent(db, run.id, "error", null, {
-        reason: "next_node_key was null mid-advance",
+      await logEvent(db, run.id, "completed", null, {
+        reason: "flow_completed",
       });
-      await endRun(db, run.id, "failed", "missing_next_node");
+      await endRun(db, run.id, "completed", "flow_completed");
       return { outcome: "completed" };
     }
     const node: FlowNodeRow | null = nodes.get(currentKey) ?? null;
@@ -1099,12 +1110,36 @@ async function handleReplyForActiveRun(
   //
   // Everything else falls through to the fallback policy below.
   let matched: string | null = null;
+  let isTerminalChoice = false;
   if (
     message.kind === "interactive_reply" &&
     (currentNode.node_type === "send_buttons" ||
       currentNode.node_type === "send_list")
   ) {
-    matched = matchReplyId(currentNode, message.reply_id);
+    if (currentNode.node_type === "send_buttons") {
+      const cfg = currentNode.config as unknown as SendButtonsNodeConfig;
+      const hit = cfg.buttons?.find((b) => b.reply_id === message.reply_id);
+      if (hit) {
+        if (hit.next_node_key) {
+          matched = hit.next_node_key;
+        } else {
+          isTerminalChoice = true;
+        }
+      }
+    } else {
+      const cfg = currentNode.config as unknown as SendListNodeConfig;
+      for (const section of cfg.sections ?? []) {
+        const hit = section.rows?.find((r) => r.reply_id === message.reply_id);
+        if (hit) {
+          if (hit.next_node_key) {
+            matched = hit.next_node_key;
+          } else {
+            isTerminalChoice = true;
+          }
+          break;
+        }
+      }
+    }
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"
@@ -1124,6 +1159,18 @@ async function handleReplyForActiveRun(
       const outcome = await advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
     }
+  }
+
+  if (isTerminalChoice) {
+    await logEvent(db, run.id, "completed", currentNode.node_key, {
+      reason: "terminal_choice_selected",
+    });
+    await endRun(db, run.id, "completed", "terminal_choice_selected");
+    return {
+      consumed: true,
+      flow_run_id: run.id,
+      outcome: "completed",
+    };
   }
 
   if (matched) {

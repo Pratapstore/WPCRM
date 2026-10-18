@@ -215,7 +215,7 @@ function validateTrigger(
       : null;
     if (!keywords || keywords.length === 0) {
       issues.push({
-        severity: "error",
+        severity: "warning",
         scope: "trigger",
         field: "trigger_config.keywords",
         message: t("keywordsRequired"),
@@ -288,7 +288,7 @@ function validateNode(
       }
       if (!cfg.next_node_key) {
         issues.push({
-          severity: "error",
+          severity: "warning",
           scope: "node",
           node_key: node.node_key,
           field: "next_node_key",
@@ -347,7 +347,7 @@ function validateNode(
       }
       if (!cfg.next_node_key) {
         issues.push({
-          severity: "error",
+          severity: "warning",
           scope: "node",
           node_key: node.node_key,
           field: "next_node_key",
@@ -447,7 +447,7 @@ function validateNode(
 
         if (!b.next_node_key) {
           issues.push({
-            severity: "error",
+            severity: "warning",
             scope: "node",
             node_key: node.node_key,
             field: `${field}.next_node_key`,
@@ -482,7 +482,7 @@ function validateNode(
       };
       if (!cfg.text?.trim()) {
         issues.push({
-          severity: "error",
+          severity: "warning",
           scope: "node",
           node_key: node.node_key,
           field: "text",
@@ -585,7 +585,7 @@ function validateNode(
           }
           if (!row.next_node_key) {
             issues.push({
-              severity: "error",
+              severity: "warning",
               scope: "node",
               node_key: node.node_key,
               field: `${field}.next_node_key`,

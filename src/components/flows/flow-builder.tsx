@@ -220,7 +220,7 @@ export function FlowBuilder() {
  * component unmounts/remounts when the trigger type changes, so the
  * seed stays in sync. Mirrors the automations builder's KeywordMatchConfig.
  */
-function KeywordsInput({
+export function KeywordsInput({
   keywords,
   onChange,
   t,

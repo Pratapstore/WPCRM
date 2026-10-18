@@ -1546,7 +1546,9 @@
     "validation": {
       "noIssues": "Sin problemas. Listo para activar.",
       "summary": "{errorCount} {errorCount, plural, =1 {error} other {errores}}, {warningCount} {warningCount, plural, =1 {advertencia} other {advertencias}}",
-      "jumpToNode": "Ir al nodo {key}"
+      "jumpToNode": "Ir al nodo {key}",
+      "showDetails": "Mostrar detalles",
+      "hideDetails": "Ocultar detalles"
     },
     "editorState": {
       "saved": "Guardado.",
