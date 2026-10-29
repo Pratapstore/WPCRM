@@ -69,6 +69,12 @@ const APP_LOCALE = ["en", "pt", "es", "ko"].includes(process.env.NEXT_PUBLIC_APP
   : "en";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: [
+    "@whiskeysockets/baileys",
+    "jimp",
+    "sharp",
+    "pino",
+  ],
   turbopack: {
     resolveAlias: {
       "@app-messages": `./messages/${APP_LOCALE}.json`,
