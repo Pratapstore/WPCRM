@@ -45,6 +45,14 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 };
 
 
+function formatSnippet(text: string | null | undefined): string | null {
+  if (!text) return null;
+  if (text.includes("Unsupported message") || text.includes("unsupported")) {
+    return "⚠️ Unsupported message format";
+  }
+  return text;
+}
+
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -484,7 +492,7 @@ function ConversationItem({
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || t("noMessagesYet")}
+            {formatSnippet(conversation.last_message_text) || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {conversation.unread_count > 0 && (

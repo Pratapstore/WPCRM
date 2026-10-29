@@ -111,6 +111,10 @@ const nextConfig: NextConfig = {
    * has no effect on a production build.
    */
   allowedDevOrigins: [
+    "192.168.1.106",
+    "192.168.*.*",
+    "10.*.*.*",
+    "172.*.*.*",
     "*.ngrok-free.app",
     "*.ngrok.app",
     "*.ngrok.io",

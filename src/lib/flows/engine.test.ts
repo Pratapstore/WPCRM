@@ -293,28 +293,58 @@ describe("matchInteractiveReply", () => {
 
   it("matches tapped reply_id", () => {
     const res = matchInteractiveReply(listNode, { reply_id: "row_1" });
-    expect(res).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+    expect(res).toEqual({
+      next_node_key: "step_products",
+      isTerminalChoice: false,
+      matchedTitle: "View Products",
+      matchedId: "row_1",
+    });
   });
 
   it("matches typed option title (case-insensitive, trimmed)", () => {
     const res = matchInteractiveReply(listNode, { text: "view products" });
-    expect(res).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+    expect(res).toEqual({
+      next_node_key: "step_products",
+      isTerminalChoice: false,
+      matchedTitle: "View Products",
+      matchedId: "row_1",
+    });
 
     const res2 = matchInteractiveReply(listNode, { text: "Support" });
-    expect(res2).toEqual({ next_node_key: "step_support", isTerminalChoice: false });
+    expect(res2).toEqual({
+      next_node_key: "step_support",
+      isTerminalChoice: false,
+      matchedTitle: "Support",
+      matchedId: "row_2",
+    });
   });
 
   it("matches typed 1-based number index (1 -> first option, 2 -> second)", () => {
     const res1 = matchInteractiveReply(listNode, { text: "1" });
-    expect(res1).toEqual({ next_node_key: "step_products", isTerminalChoice: false });
+    expect(res1).toEqual({
+      next_node_key: "step_products",
+      isTerminalChoice: false,
+      matchedTitle: "View Products",
+      matchedId: "row_1",
+    });
 
     const res2 = matchInteractiveReply(listNode, { text: "2" });
-    expect(res2).toEqual({ next_node_key: "step_support", isTerminalChoice: false });
+    expect(res2).toEqual({
+      next_node_key: "step_support",
+      isTerminalChoice: false,
+      matchedTitle: "Support",
+      matchedId: "row_2",
+    });
   });
 
   it("identifies terminal choice when next_node_key is empty", () => {
     const res = matchInteractiveReply(listNode, { text: "3" });
-    expect(res).toEqual({ next_node_key: null, isTerminalChoice: true });
+    expect(res).toEqual({
+      next_node_key: null,
+      isTerminalChoice: true,
+      matchedTitle: "Exit",
+      matchedId: "row_3",
+    });
   });
 });
 

@@ -288,8 +288,29 @@ export function MessageThread({
     };
   }, []);
 
+  // Check if Baileys (linked WhatsApp web session) is active
+  const [isBaileysActive, setIsBaileysActive] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/whatsapp/baileys")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled && (d?.status === "connected" || (typeof d?.activeCount === "number" && d.activeCount > 0))) {
+          setIsBaileysActive(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
+    if (isBaileysActive) {
+      return { expired: false, remaining: "WhatsApp Linked (No 24h Limit)", isBaileys: true };
+    }
+
     if (!messages.length) return { expired: false, remaining: "" };
 
     // Find last customer message
@@ -297,13 +318,13 @@ export function MessageThread({
       .reverse()
       .find((m) => m.sender_type === "customer");
 
-    if (!lastCustomerMsg) return { expired: true, remaining: tTimer("noCustomerMessages") };
+    if (!lastCustomerMsg) return { expired: true, remaining: tTimer("noCustomerMessages"), isBaileys: false };
 
     const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
     const expired = hoursSince >= 24;
 
     if (expired) {
-      return { expired: true, remaining: tTimer("expired") };
+      return { expired: true, remaining: tTimer("expired"), isBaileys: false };
     }
 
     const hoursLeft = 24 - hoursSince;
@@ -312,8 +333,8 @@ export function MessageThread({
         ? tTimer("xhRemaining", { hours: Math.floor(hoursLeft) })
         : tTimer("xmRemaining", { minutes: Math.floor(hoursLeft * 60) });
 
-    return { expired, remaining };
-  }, [messages, tTimer]);
+    return { expired, remaining, isBaileys: false };
+  }, [messages, tTimer, isBaileysActive]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -1028,7 +1049,11 @@ export function MessageThread({
             variant="outline"
             className={cn(
               "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
+              sessionInfo.isBaileys
+                ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                : sessionInfo.expired
+                  ? "text-red-400 border-red-500/30 bg-red-500/10"
+                  : "text-primary border-primary/30"
             )}
           >
             <Clock className="h-3 w-3" />
@@ -1255,6 +1280,8 @@ export function MessageThread({
                           reactions={msgReactions}
                           onToggleReaction={handlePillToggle}
                           onOpenMedia={handleMediaChange}
+                          contactPhone={contact?.phone}
+                          onOpenTemplates={handleOpenTemplates}
                         />
                       </MessageActions>
                     );
@@ -1286,6 +1313,7 @@ export function MessageThread({
       <MessageComposer
         conversationId={conversation.id}
         sessionExpired={sessionInfo.expired}
+        contactPhone={contact?.phone}
         onSend={handleSend}
         onSendMedia={handleSendMedia}
         onSendInteractive={handleSendInteractive}

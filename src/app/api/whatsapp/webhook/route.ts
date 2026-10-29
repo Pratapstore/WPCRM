@@ -21,6 +21,7 @@ import {
 import { readCappedBody } from '@/lib/whatsapp/webhook-body'
 import { resumeAwaitingReply, runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { processCommerceInboundMessage, isProductAction } from '@/lib/orders/commerce-bot'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -798,35 +799,102 @@ async function processMessage(
   // runner has its own try/catch and never throws. Accounts with
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
-  // ============================================================
-  const flowResult = await dispatchInboundToFlows({
-    accountId,
-    userId: configOwnerUserId,
-    contactId: contactRecord.id,
-    conversationId: conversation.id,
-    message:
-      interactiveReplyId
-        ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
-        : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
-    isFirstInboundMessage,
-  })
-  const flowConsumed = flowResult.consumed
-
-  // Fire any automations that react to this webhook event. All dispatches
-  // run here (not earlier) so the contact, conversation, and inbound
-  // message all exist before any step — including send_message — runs.
-  // Fire-and-forget: a slow or failing automation must not block the
-  // webhook's 200 OK response to Meta.
   const inboundText = contentText ?? message.text?.body ?? ''
+
+  // 1. Check if this is a Product Action button tap (Order Now, All Products, Chat with Us)
+  //    or an active order session (customer is currently in checkout)
+  const isProdAction = isProductAction(interactiveReplyId, contentText, inboundText)
+
+  if (isProdAction) {
+    // Tapping a product action cancels any active flow run so bot doesn't intercept or reprompt
+    await supabaseAdmin()
+      .from('flow_runs')
+      .update({
+        status: 'cancelled',
+        end_reason: 'product_action_override',
+        ended_at: new Date().toISOString(),
+      })
+      .eq('account_id', accountId)
+      .eq('contact_id', contactRecord.id)
+      .eq('status', 'active')
+  }
+
+  // Check if contact is in an active order session
+  const { data: activeOrderSession } = await supabaseAdmin()
+    .from('order_sessions')
+    .select('state')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactRecord.id)
+    .maybeSingle()
+
+  const inActiveOrderCheckout =
+    activeOrderSession?.state &&
+    activeOrderSession.state !== 'IDLE' &&
+    activeOrderSession.state !== 'COMPLETED'
+
+  let commerceConsumed = false
+  if (isProdAction || inActiveOrderCheckout) {
+    try {
+      const commerceRes = await processCommerceInboundMessage({
+        accountId,
+        contactId: contactRecord.id,
+        conversationId: conversation.id,
+        messageText: inboundText,
+        interactiveReplyId,
+        interactiveReplyTitle: contentText,
+        customerName: contactRecord.name,
+        customerPhone: contactRecord.phone,
+      })
+      commerceConsumed = commerceRes.handled
+    } catch (commerceErr) {
+      console.warn('[Webhook] Commerce bot error:', commerceErr)
+    }
+  }
+
+  // 2. Dispatch to Flows engine only if not handled by product actions
+  let flowConsumed = false
+  if (!commerceConsumed) {
+    const flowResult = await dispatchInboundToFlows({
+      accountId,
+      userId: configOwnerUserId,
+      contactId: contactRecord.id,
+      conversationId: conversation.id,
+      message:
+        interactiveReplyId
+          ? {
+              kind: 'interactive_reply',
+              reply_id: interactiveReplyId,
+              reply_title: contentText ?? '',
+              meta_message_id: message.id,
+            }
+          : {
+              kind: 'text',
+              text: inboundText,
+              meta_message_id: message.id,
+            },
+      isFirstInboundMessage,
+    })
+    flowConsumed = flowResult.consumed
+
+    // If flow didn't consume it either, run commerce bot general intent check
+    if (!flowConsumed) {
+      try {
+        const commerceRes = await processCommerceInboundMessage({
+          accountId,
+          contactId: contactRecord.id,
+          conversationId: conversation.id,
+          messageText: inboundText,
+          interactiveReplyId,
+          interactiveReplyTitle: contentText,
+          customerName: contactRecord.name,
+          customerPhone: contactRecord.phone,
+        })
+        commerceConsumed = commerceRes.handled
+      } catch (commerceErr) {
+        console.warn('[Webhook] Commerce bot error:', commerceErr)
+      }
+    }
+  }
 
   // An automation parked at a "wait for reply" Send Buttons / Send List
   // step takes this message as its reply — a tap or typed text — and
@@ -836,7 +904,7 @@ async function processMessage(
   // BEFORE the trigger dispatch so the message that parks a run can
   // never also resume it. Flows still win: only checked if no flow
   // consumed the message. Never throws.
-  const automationConsumed = flowConsumed
+  const automationConsumed = flowConsumed || commerceConsumed
     ? false
     : await resumeAwaitingReply({
         accountId,
@@ -847,7 +915,7 @@ async function processMessage(
           interactive_reply_id: interactiveReplyId ?? undefined,
         },
       })
-  const contentConsumed = flowConsumed || automationConsumed
+  const contentConsumed = flowConsumed || commerceConsumed || automationConsumed
 
   const automationTriggers: (
     | 'new_contact_created'
@@ -1130,10 +1198,78 @@ async function parseMessageContent(
       }
     }
 
+    case 'contacts': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawContacts = (message as any).contacts || []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const parts = rawContacts.map((c: any) => {
+        const name =
+          c.name?.formatted_name ||
+          [c.name?.first_name, c.name?.last_name].filter(Boolean).join(' ') ||
+          'Contact'
+        const phone = c.phones?.[0]?.phone || ''
+        return phone ? `👤 ${name} (${phone})` : `👤 ${name}`
+      })
+      return {
+        ...empty,
+        contentText: parts.length > 0 ? parts.join('\n') : '👤 [Contact Card]',
+      }
+    }
+
+    case 'order': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const order = (message as any).order
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (order?.product_items || [])
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((p: any) => `${p.quantity || 1}x ${p.product_retailer_id || 'item'} (${p.currency || '₹'} ${p.item_price || ''})`)
+        .join(', ')
+      const note = order?.text ? ` - ${order.text}` : ''
+      return {
+        ...empty,
+        contentText: items ? `🛍️ Order: ${items}${note}` : '🛍️ [Order]',
+      }
+    }
+
+    case 'system': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sys = (message as any).system
+      return {
+        ...empty,
+        contentText: sys?.body || sys?.description || 'ℹ️ [System Notification]',
+      }
+    }
+
+    case 'poll':
+    case 'poll_creation':
+    case 'poll_update': {
+      return {
+        ...empty,
+        contentText: '📊 [Poll / Vote - Format not supported by WhatsApp Business API]',
+      }
+    }
+
+    case 'unsupported': {
+      // Meta delivers type: 'unsupported' (error code 131051) when the message format
+      // is not supported by Cloud API (e.g. automated OTP templates, polls, view-once media,
+      // voice/video calls, or disappearing message notices).
+      const from = message.from || ''
+      if (from.includes('447974904959') || from.includes('447710173736')) {
+        return {
+          ...empty,
+          contentText: '🔐 Meta Security / Verification Code (OTP Template)',
+        }
+      }
+      return {
+        ...empty,
+        contentText: 'Unsupported message format (e.g. Poll, View-Once or Call)',
+      }
+    }
+
     default:
       return {
         ...empty,
-        contentText: `[Unsupported message type: ${message.type}]`,
+        contentText: 'Unsupported message format',
       }
   }
 }

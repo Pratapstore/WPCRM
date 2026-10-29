@@ -57,12 +57,14 @@ import {
   type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 import {
   Sheet,
   SheetContent,
@@ -82,6 +84,7 @@ import {
   NodeIconChip,
   groupNodeTypesByCategory,
   nodeColors,
+  slugify,
   summarizeNode,
   type BuilderNode,
   type NodeType,
@@ -203,8 +206,14 @@ function FlowNodeCard({ data, selected }: NodeProps) {
           </span>
         )}
       </div>
-      <div className="text-muted-foreground mt-2 truncate font-mono text-[11px]">
-        {node.node_key}
+      <div className="mt-2 flex items-center justify-between gap-1 text-[11px] font-mono text-muted-foreground group">
+        <span className="truncate font-medium text-foreground/90">{node.node_key}</span>
+        <span
+          className="text-muted-foreground/60 hover:text-foreground opacity-60 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer"
+          title="Edit node name & options"
+        >
+          <Pencil className="h-3 w-3" />
+        </span>
       </div>
       {summary && (
         <div className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed">
@@ -278,6 +287,8 @@ function FlowCanvasInner() {
   const {
     state,
     setState,
+    updateNode,
+    renameNodeKey,
     updateNodeConfig,
     updateNodePosition,
     updateNodePositions,
@@ -581,6 +592,14 @@ function FlowCanvasInner() {
         allNodes={builderNodes}
         onClose={() => setSelectedNodeKey(null)}
         onUpdateConfig={onSelectedUpdateConfig}
+        onRenameKey={(newKey) => {
+          if (!selectedNode) return false;
+          const ok = renameNodeKey(selectedNode.node_key, newKey);
+          if (ok) {
+            setSelectedNodeKey(newKey);
+          }
+          return ok;
+        }}
         onDelete={handleDeleteSelected}
         onSetEntry={handleSetEntry}
         t={t}
@@ -601,6 +620,7 @@ function NodeEditSheet({
   allNodes,
   onClose,
   onUpdateConfig,
+  onRenameKey,
   onDelete,
   onSetEntry,
   t,
@@ -610,13 +630,23 @@ function NodeEditSheet({
   allNodes: BuilderNode[];
   onClose: () => void;
   onUpdateConfig: (patch: Record<string, unknown>) => void;
+  onRenameKey: (newKey: string) => boolean;
   onDelete: () => void;
   onSetEntry: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  // Sheet is controlled — opens when a node is selected, closes via
-  // Esc / overlay / close button (all delegated to onClose).
   const open = node !== null;
+  const [nameDraft, setNameDraft] = useState(node?.node_key ?? '');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  useEffect(() => {
+    if (node) {
+      setNameDraft(node.node_key);
+      setRenameError(null);
+    }
+  }, [node?.node_key]);
+
   if (!node) {
     return (
       <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -626,6 +656,42 @@ function NodeEditSheet({
   }
   const meta = NODE_META[node.node_type];
   const c = nodeColors(node.node_type);
+
+  const handleCommitRename = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameDraft(node.node_key);
+      setRenameError(null);
+      return;
+    }
+    const cleanKey = slugify(trimmed, node.node_key);
+    if (cleanKey === node.node_key) {
+      setNameDraft(cleanKey);
+      setRenameError(null);
+      return;
+    }
+    const isDuplicate = allNodes.some(
+      (n) => n.node_key === cleanKey && n.node_key !== node.node_key
+    );
+    if (isDuplicate) {
+      setRenameError(
+        `Name "${cleanKey}" is already used by another step.`
+      );
+      return;
+    }
+
+    const success = onRenameKey(cleanKey);
+    if (success) {
+      setNameDraft(cleanKey);
+      setRenameError(null);
+      toast.success(`Step renamed to "${cleanKey}"`);
+    } else {
+      setRenameError(
+        'Could not rename step. Please choose a different name.'
+      );
+    }
+  };
+
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent
@@ -652,13 +718,84 @@ function NodeEditSheet({
           </code>
         </SheetHeader>
 
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+          {/* Step Name / Node Key Edit Card */}
+          <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="node-name-input"
+                className="text-xs font-semibold text-foreground flex items-center gap-1.5"
+              >
+                <Pencil className="h-3.5 w-3.5 text-primary" />
+                Step Name / Node Key
+              </label>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {node.node_type}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                id="node-name-input"
+                value={nameDraft}
+                onChange={(e) => {
+                  setNameDraft(e.target.value);
+                  if (renameError) setRenameError(null);
+                }}
+                onBlur={handleCommitRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
+                }}
+                placeholder="e.g. tshirt_options"
+                className="bg-card font-mono text-xs h-8"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 text-xs shrink-0 px-3 font-medium"
+                onClick={handleCommitRename}
+                disabled={
+                  !nameDraft.trim() ||
+                  slugify(nameDraft, node.node_key) === node.node_key
+                }
+              >
+                Rename
+              </Button>
+            </div>
+            {renameError ? (
+              <p className="text-[11px] font-medium text-destructive">{renameError}</p>
+            ) : (
+              <p className="text-[10.5px] text-muted-foreground leading-normal">
+                Connected edges and branching options update automatically when renamed.
+              </p>
+            )}
+          </div>
+
           <NodeConfigForm
             node={node}
             allNodes={allNodes}
-            showAdvanced={false}
+            showAdvanced={showAdvanced}
             onUpdateConfig={onUpdateConfig}
           />
+
+          {(node.node_type === 'send_buttons' || node.node_type === 'send_list') && (
+            <div className="border-border border-t pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+              >
+                {showAdvanced ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+                {showAdvanced ? 'Hide advanced (Reply IDs)' : 'Show advanced (Reply IDs)'}
+              </button>
+            </div>
+          )}
         </div>
 
         <SheetFooter className="border-border border-t px-5 py-3 sm:flex-row sm:justify-between">

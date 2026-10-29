@@ -16,6 +16,8 @@ import {
   HelpCircle,
   UserPlus,
   FileText,
+  ShoppingBag,
+  Smartphone,
 } from "lucide-react";
 
 import { useTranslations } from "next-intl";
@@ -71,7 +73,7 @@ interface TemplateSummary {
   slug: string;
   name: string;
   description: string;
-  icon: "MessageSquare" | "HelpCircle" | "UserPlus";
+  icon: "MessageSquare" | "HelpCircle" | "UserPlus" | "ShoppingBag";
   trigger_type: string;
   node_count: number;
 }
@@ -80,6 +82,7 @@ const TEMPLATE_ICONS = {
   MessageSquare,
   HelpCircle,
   UserPlus,
+  ShoppingBag,
 } as const;
 
 export default function FlowsPage() {
@@ -409,6 +412,20 @@ function FlowCard({
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            try {
+              window.localStorage.setItem("wacrm.flowEditor.view", "preview");
+            } catch {}
+            onEdit();
+          }}
+          className="gap-1.5 text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+        >
+          <Smartphone className="h-3.5 w-3.5" />
+          Live Preview
+        </Button>
         <Button variant="ghost" size="sm" onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
           {t("edit")}

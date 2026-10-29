@@ -15,12 +15,21 @@ import {
   DollarSign,
   StickyNote,
   Plus,
+  ShoppingBag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
+import { CreateOrderDialog } from "@/components/orders/create-order-dialog";
+import { OrderDetailsDrawer } from "@/components/orders/order-details-drawer";
+import {
+  PaymentMethodBadge,
+  PaymentStatusBadge,
+} from "@/components/orders/order-status-badge";
+import type { Order } from "@/types/orders";
+import { toast } from "sonner";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -35,16 +44,20 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orderDetailsOpen, setOrderDetailsOpen] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
 
     const supabase = createClient();
 
-    // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    // Fetch deals, notes, tags, and orders in parallel
+    const [dealsRes, notesRes, tagsRes, ordersRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -59,10 +72,16 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
         .eq("contact_id", contact.id),
+      supabase
+        .from("orders")
+        .select("*")
+        .eq("contact_id", contact.id)
+        .order("created_at", { ascending: false }),
     ]);
 
     if (dealsRes.data) setDeals(dealsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
+    if (ordersRes.data) setOrders(ordersRes.data as Order[]);
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -182,7 +201,103 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 <span className="truncate">{contact.email}</span>
               </div>
             )}
+
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full mt-2 gap-1.5 text-xs text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10 font-medium"
+              onClick={() => setOrderDialogOpen(true)}
+            >
+              <ShoppingBag className="h-3.5 w-3.5" />
+              Create WhatsApp Order
+            </Button>
           </div>
+
+          {/* Orders Section */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <ShoppingBag className="h-3.5 w-3.5 text-indigo-400" />
+                Orders ({orders.length})
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[11px] text-indigo-400 hover:text-indigo-300 gap-1"
+                onClick={() => setOrderDialogOpen(true)}
+              >
+                <Plus className="h-3 w-3" />
+                New
+              </Button>
+            </div>
+
+            <div className="mt-2 space-y-2">
+              {orders.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3 text-center">
+                  <p className="text-xs text-muted-foreground">No orders placed yet.</p>
+                  <Button
+                    size="sm"
+                    variant="link"
+                    className="text-xs text-indigo-400 p-0 h-auto mt-1"
+                    onClick={() => setOrderDialogOpen(true)}
+                  >
+                    + Create First WhatsApp Order
+                  </Button>
+                </div>
+              ) : (
+                orders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    className="rounded-xl border bg-muted/30 p-2.5 space-y-1.5 hover:bg-muted/50 cursor-pointer transition-colors"
+                    onClick={() => {
+                      setSelectedOrder(ord);
+                      setOrderDetailsOpen(true);
+                    }}
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono font-bold text-foreground">
+                        {ord.order_number}
+                      </span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        ₹{ord.total_amount}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      <PaymentMethodBadge method={ord.payment_method} className="text-[10px] py-0.5 px-1.5" />
+                      <PaymentStatusBadge status={ord.payment_status} className="text-[10px] py-0.5 px-1.5" />
+                    </div>
+
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {ord.items.map((i) => `${i.name} (x${i.quantity})`).join(", ")}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <CreateOrderDialog
+            open={orderDialogOpen}
+            onOpenChange={setOrderDialogOpen}
+            defaultCustomerName={displayName}
+            defaultCustomerPhone={contact.phone || ""}
+            contactId={contact.id}
+            onOrderCreated={(newOrd) => {
+              toast.success(`Order #${newOrd.order_number} created & WhatsApp link sent!`);
+              fetchContactData();
+            }}
+          />
+
+          <OrderDetailsDrawer
+            order={selectedOrder}
+            open={orderDetailsOpen}
+            onOpenChange={setOrderDetailsOpen}
+            onOrderUpdated={(updated) => {
+              setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+              setSelectedOrder(updated);
+            }}
+          />
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />

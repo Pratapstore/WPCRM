@@ -4,6 +4,7 @@ import {
   deriveCanvasEdges,
   outgoingSlots,
   unlinkNodeReferences,
+  renameNodeReferences,
 } from "./edges";
 import type { BuilderNode } from "@/components/flows/shared";
 
@@ -589,3 +590,68 @@ describe("unlinkNodeReferences", () => {
     expect(after[1]).toBe(nodes[1]);
   });
 });
+
+describe("renameNodeReferences", () => {
+  it("renames the target node and rewires incoming next_node_key across send_media and send_list", () => {
+    const nodes: BuilderNode[] = [
+      {
+        node_key: "send_list_2",
+        node_type: "send_list",
+        config: {
+          sections: [
+            {
+              rows: [
+                { reply_id: "r1", title: "T-shirts", next_node_key: "send_list_3" },
+                { reply_id: "r2", title: "Mugs", next_node_key: "send_media_1" },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        node_key: "send_list_3",
+        node_type: "send_list",
+        config: {
+          text: "Choose style",
+          sections: [
+            {
+              rows: [
+                { reply_id: "s1", title: "Collar", next_node_key: "send_media_4" },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        node_key: "send_media_4",
+        node_type: "send_media",
+        config: {
+          media_type: "image",
+          filename: "shirt.png",
+          next_node_key: "",
+        },
+      },
+    ];
+
+    const renamedList = renameNodeReferences(nodes, "send_list_3", "tshirt_menu");
+    expect(renamedList.find((n) => n.node_key === "tshirt_menu")).toBeDefined();
+    expect(renamedList.find((n) => n.node_key === "send_list_3")).toBeUndefined();
+
+    const parentList = renamedList.find((n) => n.node_key === "send_list_2");
+    const parentRows = (parentList?.config as {
+      sections: Array<{ rows: Array<{ next_node_key: string }> }>;
+    }).sections[0].rows;
+    expect(parentRows[0].next_node_key).toBe("tshirt_menu");
+    expect(parentRows[1].next_node_key).toBe("send_media_1");
+
+    // Now rename send_media_4
+    const renamedMedia = renameNodeReferences(renamedList, "send_media_4", "collar_preview");
+    expect(renamedMedia.find((n) => n.node_key === "collar_preview")).toBeDefined();
+    const tshirtMenu = renamedMedia.find((n) => n.node_key === "tshirt_menu");
+    const menuRows = (tshirtMenu?.config as {
+      sections: Array<{ rows: Array<{ next_node_key: string }> }>;
+    }).sections[0].rows;
+    expect(menuRows[0].next_node_key).toBe("collar_preview");
+  });
+});
+

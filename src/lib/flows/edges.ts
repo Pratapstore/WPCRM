@@ -410,3 +410,100 @@ function patchedConfigWithoutKey(
   }
 }
 
+/**
+ * Walk every node and replace any `next_node_key` / `true_next` /
+ * `false_next` / `button.next_node_key` / `row.next_node_key`
+ * reference from `oldKey` to `newKey`. Also updates the target node's
+ * own `node_key` from `oldKey` to `newKey`.
+ */
+export function renameNodeReferences(
+  nodes: BuilderNode[],
+  oldKey: string,
+  newKey: string,
+): BuilderNode[] {
+  return nodes.map((n) => {
+    const isTargetNode = n.node_key === oldKey;
+    const patched = patchedConfigWithRenamedKey(n, oldKey, newKey);
+    return {
+      ...n,
+      node_key: isTargetNode ? newKey : n.node_key,
+      config: patched ? patched : n.config,
+    };
+  });
+}
+
+function patchedConfigWithRenamedKey(
+  node: BuilderNode,
+  oldKey: string,
+  newKey: string,
+): Record<string, unknown> | null {
+  const cfg = node.config;
+  switch (node.node_type) {
+    case "start":
+    case "send_message":
+    case "send_media":
+    case "collect_input":
+    case "set_tag": {
+      const next = (cfg as { next_node_key?: string }).next_node_key;
+      if (next !== oldKey) return null;
+      return { ...cfg, next_node_key: newKey };
+    }
+
+    case "condition": {
+      const c = cfg as { true_next?: string; false_next?: string };
+      const trueMatch = c.true_next === oldKey;
+      const falseMatch = c.false_next === oldKey;
+      if (!trueMatch && !falseMatch) return null;
+      return {
+        ...cfg,
+        ...(trueMatch ? { true_next: newKey } : {}),
+        ...(falseMatch ? { false_next: newKey } : {}),
+      };
+    }
+
+    case "send_buttons": {
+      const buttons = Array.isArray((cfg as { buttons?: unknown }).buttons)
+        ? (cfg as {
+            buttons: Array<Record<string, unknown>>;
+          }).buttons
+        : [];
+      if (!buttons.some((b) => b.next_node_key === oldKey)) return null;
+      return {
+        ...cfg,
+        buttons: buttons.map((b) =>
+          b.next_node_key === oldKey ? { ...b, next_node_key: newKey } : b,
+        ),
+      };
+    }
+
+    case "send_list": {
+      const sections = Array.isArray((cfg as { sections?: unknown }).sections)
+        ? (cfg as {
+            sections: Array<Record<string, unknown>>;
+          }).sections
+        : [];
+      let dirty = false;
+      const next = sections.map((s) => {
+        const rows = Array.isArray(s.rows)
+          ? (s.rows as Array<Record<string, unknown>>)
+          : [];
+        return {
+          ...s,
+          rows: rows.map((r) => {
+            if (r.next_node_key === oldKey) {
+              dirty = true;
+              return { ...r, next_node_key: newKey };
+            }
+            return r;
+          }),
+        };
+      });
+      return dirty ? { ...cfg, sections: next } : null;
+    }
+
+    case "handoff":
+    case "end":
+      return null;
+  }
+}
+

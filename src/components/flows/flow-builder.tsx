@@ -191,7 +191,20 @@ export function FlowBuilder() {
                 (i) => i.scope === 'node' && i.node_key === node.node_key
               )}
               onToggle={() => toggleExpanded(node.node_key)}
-              onUpdate={(patch) => updateNode(node.node_key, patch)}
+              onUpdate={(patch) => {
+                if (patch.node_key && patch.node_key !== node.node_key) {
+                  const newKey = slugify(patch.node_key, node.node_key);
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(node.node_key)) {
+                      next.delete(node.node_key);
+                      next.add(newKey);
+                    }
+                    return next;
+                  });
+                }
+                updateNode(node.node_key, patch);
+              }}
               onUpdateConfig={(patch) => updateNodeConfig(node.node_key, patch)}
               onRemove={() => removeNode(node.node_key)}
               onSetEntry={() =>

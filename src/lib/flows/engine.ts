@@ -61,6 +61,7 @@ import {
   type KeywordTriggerConfig,
   AUTO_ADVANCING_NODE_TYPES,
 } from "./types";
+import { syncFlowRunToOrders } from "@/lib/orders/flow-order-sync";
 
 // ============================================================
 // Pure helpers — extracted so engine.test.ts can exercise them
@@ -170,6 +171,8 @@ export interface MatchReplyInput {
 export interface InteractiveMatchResult {
   next_node_key: string | null;
   isTerminalChoice: boolean;
+  matchedTitle?: string;
+  matchedId?: string;
 }
 
 /**
@@ -193,6 +196,8 @@ export function matchInteractiveReply(
         return {
           next_node_key: hit.next_node_key ?? null,
           isTerminalChoice: !hit.next_node_key,
+          matchedTitle: hit.title,
+          matchedId: hit.reply_id,
         };
       }
     }
@@ -226,6 +231,8 @@ export function matchInteractiveReply(
       return {
         next_node_key: hit.next_node_key ? hit.next_node_key : null,
         isTerminalChoice: !hit.next_node_key,
+        matchedTitle: hit.title,
+        matchedId: hit.reply_id,
       };
     }
     return null;
@@ -240,6 +247,8 @@ export function matchInteractiveReply(
         return {
           next_node_key: hit.next_node_key ? hit.next_node_key : null,
           isTerminalChoice: !hit.next_node_key,
+          matchedTitle: hit.title,
+          matchedId: hit.reply_id,
         };
       }
     }
@@ -273,6 +282,8 @@ export function matchInteractiveReply(
       return {
         next_node_key: hit.next_node_key ? hit.next_node_key : null,
         isTerminalChoice: !hit.next_node_key,
+        matchedTitle: hit.title,
+        matchedId: hit.reply_id,
       };
     }
     return null;
@@ -634,17 +645,68 @@ async function sendButtonsAndSuspend(
   // Meta byte-for-byte as authored. Interpolation can push a title past
   // Meta's 20-char cap; meta-api's validator throws a descriptive error
   // and the caller logs it — we never truncate silently.
+  const fallbackProduct =
+    run.vars.selected_design
+      ? `${run.vars.selected_design} T-Shirt`
+      : run.vars.selected_category
+        ? `Customized ${run.vars.selected_category}`
+        : "Customized T-Shirt";
+
+  const resolvedProductName =
+    run.vars.selected_product_name && String(run.vars.selected_product_name).trim()
+      ? String(run.vars.selected_product_name).trim()
+      : fallbackProduct;
+
+  const resolvedPrice =
+    run.vars.product_price !== undefined &&
+    run.vars.product_price !== null &&
+    String(run.vars.product_price).trim() !== ""
+      ? Number(run.vars.product_price) || 399
+      : 399;
+
+  const resolvedSize =
+    run.vars.selected_size && String(run.vars.selected_size).trim()
+      ? String(run.vars.selected_size).trim()
+      : "M - 38";
+
+  // Persist resolved defaults into run.vars so subsequent nodes also receive them
+  run.vars.selected_product_name = resolvedProductName;
+  run.vars.product_price = resolvedPrice;
+  run.vars.selected_size = resolvedSize;
+
+  const varsWithDefaults: Record<string, unknown> = {
+    ...run.vars,
+    selected_product_name: resolvedProductName,
+    product_price: resolvedPrice,
+    selected_size: resolvedSize,
+    customer_name:
+      run.vars.customer_name && String(run.vars.customer_name).trim()
+        ? run.vars.customer_name
+        : "Valued Customer",
+    customer_phone:
+      run.vars.customer_phone && String(run.vars.customer_phone).trim()
+        ? run.vars.customer_phone
+        : "Not provided",
+    shipping_address:
+      run.vars.shipping_address && String(run.vars.shipping_address).trim()
+        ? run.vars.shipping_address
+        : "Not provided",
+    pincode:
+      run.vars.pincode && String(run.vars.pincode).trim()
+        ? run.vars.pincode
+        : "Not provided",
+  };
   const { whatsapp_message_id } = await engineSendInteractiveButtons({
     accountId: run.account_id,
     userId: run.user_id,
     conversationId: run.conversation_id!,
     contactId: run.contact_id!,
-    bodyText: interpolateVars(cfg.text?.trim() || "Please choose an option:", run.vars),
-    headerText: interpolateOptionalVars(cfg.header_text, run.vars),
-    footerText: interpolateOptionalVars(cfg.footer_text, run.vars),
+    bodyText: interpolateVars(cfg.text?.trim() || "Please choose an option:", varsWithDefaults),
+    headerText: interpolateOptionalVars(cfg.header_text, varsWithDefaults),
+    footerText: interpolateOptionalVars(cfg.footer_text, varsWithDefaults),
     buttons: cfg.buttons.map((b) => ({
       id: b.reply_id,
-      title: interpolateVars(b.title, run.vars),
+      title: interpolateVars(b.title, varsWithDefaults),
     })),
   });
   await logEvent(db, run.id, "message_sent", node.node_key, {
@@ -662,6 +724,7 @@ async function sendButtonsAndSuspend(
     .from("flow_runs")
     .update({
       last_prompt_message_id: (msg as { id: string } | null)?.id ?? null,
+      vars: run.vars,
     })
     .eq("id", run.id);
   return { outcome: "advanced", node_key: node.node_key };
@@ -814,7 +877,13 @@ function interpolateVars(template: string, vars: Record<string, unknown>): strin
   if (!template) return "";
   return template.replace(/\{\{vars\.([a-zA-Z0-9_]+)\}\}/g, (_, key) => {
     const v = vars[key];
-    return v === undefined || v === null ? "" : String(v);
+    if (v === undefined || v === null || String(v).trim() === "") {
+      if (key === "selected_product_name") return "Customized T-Shirt";
+      if (key === "product_price") return "399";
+      if (key === "selected_size") return "M - 38";
+      return "";
+    }
+    return String(v);
   });
 }
 
@@ -850,6 +919,26 @@ async function endRun(
     })
     .eq("id", runId)
     .eq("status", "active");
+
+  try {
+    const { data: run } = await db
+      .from("flow_runs")
+      .select("*")
+      .eq("id", runId)
+      .maybeSingle();
+
+    if (run && run.vars) {
+      await syncFlowRunToOrders(db, {
+        accountId: run.account_id,
+        contactId: run.contact_id,
+        conversationId: run.conversation_id,
+        flowRunId: run.id,
+        vars: run.vars,
+      });
+    }
+  } catch (syncErr) {
+    console.warn("[engine] syncFlowRunToOrders on endRun error:", syncErr);
+  }
 }
 
 // ============================================================
@@ -988,6 +1077,7 @@ async function advanceFromNodeKey(
         run.id,
         run.current_node_key,
         node.node_key,
+        run.vars,
       );
       if (!advanced) {
         await logEvent(db, run.id, "error", node.node_key, {
@@ -1075,6 +1165,7 @@ async function advanceFromNodeKey(
         run.id,
         run.current_node_key,
         node.node_key,
+        run.vars,
       );
       if (!advanced) {
         await logEvent(db, run.id, "error", node.node_key, {
@@ -1099,6 +1190,7 @@ async function advanceFromNodeKey(
         run.id,
         run.current_node_key,
         node.node_key,
+        run.vars,
       );
       if (!advanced) {
         await logEvent(db, run.id, "error", node.node_key, {
@@ -1112,6 +1204,17 @@ async function advanceFromNodeKey(
       return { outcome: "handed_off" };
     }
     if (node.node_type === "end") {
+      try {
+        await syncFlowRunToOrders(db, {
+          accountId: run.account_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          flowRunId: run.id,
+          vars: run.vars,
+        });
+      } catch (syncErr) {
+        console.warn("[engine] syncFlowRunToOrders on end node error:", syncErr);
+      }
       await logEvent(db, run.id, "completed", node.node_key);
       await endRun(db, run.id, "completed", "end_node");
       return { outcome: "completed" };
@@ -1142,15 +1245,20 @@ async function advanceCurrentNodeKey(
   runId: string,
   expectedOldKey: string | null,
   newKey: string,
+  vars?: Record<string, unknown>,
 ): Promise<boolean> {
   // PostgREST: when expectedOldKey is null we can't `.eq` (would match
   // any row); use `.is('current_node_key', null)` instead.
+  const updatePayload: Record<string, unknown> = {
+    current_node_key: newKey,
+    last_advanced_at: new Date().toISOString(),
+  };
+  if (vars !== undefined) {
+    updatePayload.vars = vars;
+  }
   let q = db
     .from("flow_runs")
-    .update({
-      current_node_key: newKey,
-      last_advanced_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", runId)
     .eq("status", "active");
   if (expectedOldKey === null) {
@@ -1340,6 +1448,62 @@ async function handleReplyForActiveRun(
     if (replyMatch) {
       matched = replyMatch.next_node_key;
       isTerminalChoice = replyMatch.isTerminalChoice;
+
+      const choiceTitle =
+        (replyMatch.matchedTitle ? replyMatch.matchedTitle : null) ||
+        (message.kind === "interactive_reply" ? message.reply_title : null) ||
+        (message.kind === "text" ? message.text : null) ||
+        "";
+
+      if (choiceTitle) {
+        const titleTrimmed = choiceTitle.trim();
+        if (
+          currentNode.node_key === "send_list_7" ||
+          currentNode.node_key.includes("size")
+        ) {
+          run.vars.selected_size = titleTrimmed;
+          // If customer already entered address details (e.g. came via "Change Size" on preview),
+          // return straight to the preview screen so they do not have to retype name, address, etc.
+          if (run.vars.customer_name && run.vars.shipping_address && run.vars.pincode) {
+            matched = "send_buttons_order_preview";
+          }
+        }
+        if (currentNode.node_key === "send_list_4") {
+          run.vars.selected_design = titleTrimmed;
+          run.vars.selected_product_name = `${titleTrimmed} Round T-Shirt`;
+          run.vars.product_price = 349;
+        } else if (currentNode.node_key === "send_list_5") {
+          run.vars.selected_design = titleTrimmed;
+          run.vars.selected_product_name = `${titleTrimmed} Collar T-Shirt`;
+          run.vars.product_price = 399;
+        } else if (currentNode.node_key === "send_list_6") {
+          run.vars.selected_design = titleTrimmed;
+          run.vars.selected_product_name = titleTrimmed.toLowerCase().includes("keychain")
+            ? titleTrimmed
+            : `${titleTrimmed} Keychain`;
+          run.vars.product_price = 149;
+        } else if (currentNode.node_key === "send_list_3") {
+          run.vars.selected_design = titleTrimmed;
+          run.vars.selected_product_name = `${titleTrimmed} T-Shirt`;
+          run.vars.product_price = 399;
+        } else if (currentNode.node_key === "send_list_2") {
+          run.vars.selected_category = titleTrimmed;
+          if (titleTrimmed.toLowerCase().includes("t-shirt")) {
+            run.vars.selected_product_name = "Customized T-Shirt";
+            run.vars.product_price = 399;
+          } else if (titleTrimmed.toLowerCase().includes("keychain")) {
+            run.vars.selected_product_name = "Customized Keychain";
+            run.vars.product_price = 149;
+          } else if (titleTrimmed.toLowerCase().includes("mug")) {
+            run.vars.selected_product_name = "Customized Photo Mug";
+            run.vars.product_price = 249;
+          } else if (titleTrimmed.toLowerCase().includes("cushion")) {
+            run.vars.selected_product_name = "Customized Photo Cushion";
+            run.vars.product_price = 299;
+          }
+        }
+        run.vars[currentNode.node_key + "_choice"] = titleTrimmed;
+      }
     }
   } else if (
     message.kind === "text" &&
@@ -1347,16 +1511,153 @@ async function handleReplyForActiveRun(
   ) {
     const cfg = currentNode.config as unknown as CollectInputNodeConfig;
     const captured = message.text.trim();
-    if (captured.length > 0 && cfg.var_key && cfg.next_node_key) {
-      const newVars = { ...run.vars, [cfg.var_key]: captured };
+
+    // 1. Strict Validation Check (UTR, Mobile, PIN Code, Name, Address)
+    const varKeyLower = (cfg.var_key || "").toLowerCase();
+    const isUtrVar =
+      varKeyLower.includes("utr") ||
+      varKeyLower.includes("payment_ref") ||
+      varKeyLower.includes("txn");
+
+    let isValid = true;
+    let errorMessage = "";
+    let cleanCaptured = captured;
+
+    if (isUtrVar) {
+      // NPCI standard: Indian UPI UTR / Transaction Reference is strictly 12 digits
+      const match = captured.match(/\b\d{12}\b/);
+      if (!match) {
+        isValid = false;
+        errorMessage = `⚠️ *Invalid UPI UTR / Reference Number!*
+
+Aapne jo number bheja hai woh valid *12-digit UPI Transaction (UTR) Number* nahi hai.
+
+📌 *Sahi UTR kaise check karein:*
+1️⃣ Apne Google Pay / PhonePe / Paytm / BHIM app me transaction history open karein.
+2️⃣ Payment receipt me *UPI Transaction ID* ya *UTR* (12 digits, jaise: \`429182736450\`) copy karein.
+3️⃣ Yahan sirf wahi 12-digit number message karein.
+
+⚡ _Bina valid payment reference ke order verify nahi kiya ja sakta._`;
+      } else {
+        cleanCaptured = match[0];
+      }
+    } else if (
+      varKeyLower.includes("address") ||
+      varKeyLower.includes("street") ||
+      varKeyLower.includes("location")
+    ) {
+      if (captured.length < 6 || /^(ok|hi|hello|yes|no|done|\d+)$/i.test(captured)) {
+        isValid = false;
+        errorMessage = `⚠️ *Incomplete Address!*
+
+Kripya apna poora delivery address share karein:
+• House / Flat No.
+• Street / Colony / Village
+• Landmark & City
+
+📌 *Example:* \`House No. 12, Gandhi Road, Near Shiv Mandir, Asansol\``;
+      }
+    } else if (
+      varKeyLower.includes("pincode") ||
+      varKeyLower.includes("postal") ||
+      varKeyLower.includes("zip") ||
+      varKeyLower === "pin" ||
+      varKeyLower.endsWith("_pin") ||
+      varKeyLower.startsWith("pin_")
+    ) {
+      const match = captured.match(/\b\d{6}\b/);
+      if (!match) {
+        isValid = false;
+        errorMessage = `⚠️ *Invalid PIN Code!*
+
+Aapne jo PIN Code enter kiya hai woh valid *6-digit PIN code* nahi hai.
+
+📌 Kripya apne area ka sahi *6-digit delivery PIN Code* (jaise: \`700001\` ya \`110001\`) share karein.`;
+      } else {
+        cleanCaptured = match[0];
+      }
+    } else if (
+      varKeyLower.includes("phone") ||
+      varKeyLower.includes("mobile") ||
+      cfg.validation === "phone"
+    ) {
+      const digits = captured.replace(/\D/g, "");
+      const tenDigits =
+        digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+      if (tenDigits.length !== 10 || !/^[6-9]\d{9}$/.test(tenDigits)) {
+        isValid = false;
+        errorMessage = `⚠️ *Invalid Mobile Number!*
+
+Aapne jo number enter kiya hai woh valid 10-digit mobile number nahi hai.
+
+📌 Kripya apna valid *10-digit mobile number* (jaise: \`9876543210\`) share karein, taaki order update aur courier delivery ke liye aapse contact kiya ja sake.`;
+      } else {
+        cleanCaptured = tenDigits;
+      }
+    } else if (varKeyLower.includes("name")) {
+      if (captured.length < 2 || !/[a-zA-Z\u0900-\u097F]/.test(captured) || /^\d+$/.test(captured)) {
+        isValid = false;
+        errorMessage = `⚠️ *Invalid Name!*
+
+Kripya apna sahi poora naam (Full Name) share karein, taaki parcel par aapka sahi naam print ho sake.`;
+      }
+    } else if (cfg.validation === "regex" && cfg.regex) {
+      try {
+        const re = new RegExp(cfg.regex);
+        if (!re.test(captured)) {
+          isValid = false;
+          errorMessage = "⚠️ Kripya sahi format me details share karein.";
+        }
+      } catch (e) {
+        console.warn("Invalid regex in collect_input config:", cfg.regex);
+      }
+    }
+
+    if (!isValid) {
+      if (run.conversation_id && run.contact_id) {
+        try {
+          await engineSendText({
+            accountId: run.account_id,
+            userId: run.user_id,
+            conversationId: run.conversation_id,
+            contactId: run.contact_id,
+            text: errorMessage,
+          });
+        } catch (sendErr) {
+          console.error("Failed to send validation error message:", sendErr);
+        }
+      }
+      return {
+        consumed: true,
+        flow_run_id: run.id,
+        outcome: "fallback_fired",
+      };
+    }
+
+    if (cleanCaptured.length > 0 && cfg.var_key && cfg.next_node_key) {
+      const newVars = { ...run.vars, [cfg.var_key]: cleanCaptured };
       if (!(await claimReplyTransition(db, run, cfg.next_node_key, { vars: newVars }))) {
         return lostReplyRace(db, run, currentNode.node_key);
       }
       run.vars = newVars;
       await logEvent(db, run.id, "node_entered", currentNode.node_key, {
         captured_key: cfg.var_key,
-        captured_length: captured.length,
+        captured_length: cleanCaptured.length,
       });
+
+      // Synchronize collected customer details with orders table
+      try {
+        await syncFlowRunToOrders(db, {
+          accountId: run.account_id,
+          contactId: run.contact_id,
+          conversationId: run.conversation_id,
+          flowRunId: run.id,
+          vars: newVars,
+        });
+      } catch (syncErr) {
+        console.warn("[engine] syncFlowRunToOrders error:", syncErr);
+      }
+
       const outcome = await advanceFromNodeKey(db, run, cfg.next_node_key, nodes);
       return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
     }
@@ -1375,9 +1676,22 @@ async function handleReplyForActiveRun(
   }
 
   if (matched) {
-    if (!(await claimReplyTransition(db, run, matched))) {
+    if (!(await claimReplyTransition(db, run, matched, { vars: run.vars }))) {
       return lostReplyRace(db, run, currentNode.node_key);
     }
+
+    try {
+      await syncFlowRunToOrders(db, {
+        accountId: run.account_id,
+        contactId: run.contact_id,
+        conversationId: run.conversation_id,
+        flowRunId: run.id,
+        vars: run.vars,
+      });
+    } catch (syncErr) {
+      console.warn("[engine] syncFlowRunToOrders on matched error:", syncErr);
+    }
+
     const outcome = await advanceFromNodeKey(db, run, matched, nodes);
     return {
       consumed: true,

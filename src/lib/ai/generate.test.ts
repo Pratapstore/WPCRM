@@ -308,3 +308,70 @@ describe('generateReply — OpenAI-compatible', () => {
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual')
   })
 })
+
+describe('generateReply — Google Gemini', () => {
+  it('calls the generateContent endpoint and parses parts and usage', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'Hello from Gemini!' }],
+              role: 'model',
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 15,
+          candidatesTokenCount: 5,
+          totalTokenCount: 20,
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await generateReply({
+      config: config({ provider: 'gemini', model: 'gemini-1.5-flash', apiKey: 'AIzaSyTestKey' }),
+      systemPrompt: 'You are helpful.',
+      messages: [{ role: 'user', content: 'Namaste' }],
+    })
+
+    expect(res).toEqual({
+      text: 'Hello from Gemini!',
+      handoff: false,
+      usage: { promptTokens: 15, completionTokens: 5, totalTokens: 20 },
+    })
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toContain('generativelanguage.googleapis.com')
+    expect(url).toContain('gemini-1.5-flash')
+    expect(url).toContain('key=AIzaSyTestKey')
+    const body = JSON.parse(opts.body)
+    expect(body.contents[0].parts[0].text).toBe('Namaste')
+    expect(body.systemInstruction.parts[0].text).toBe('You are helpful.')
+  })
+
+  it('detects handoff sentinel in Gemini output', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        okResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'Connecting to human agent... [[HANDOFF]]' }],
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    const res = await generateReply({
+      config: config({ provider: 'gemini', apiKey: 'AIzaSyTestKey' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Agent please' }],
+    })
+    expect(res.handoff).toBe(true)
+    expect(res.text).toBe('Connecting to human agent...')
+  })
+})

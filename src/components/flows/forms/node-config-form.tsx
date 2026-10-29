@@ -398,7 +398,7 @@ function SendListForm({
       sections: [
         ...sections,
         {
-          title: "",
+          title: `Section ${sections.length + 1}`,
           rows: [
             {
               reply_id: `row_${totalRows + 1}`,
@@ -422,9 +422,9 @@ function SendListForm({
       sections: sections.map((s, i) =>
         i === sIdx
           ? {
-              ...s,
-              rows: s.rows.map((r, j) => (j === rIdx ? { ...r, ...patch } : r)),
-            }
+            ...s,
+            rows: s.rows.map((r, j) => (j === rIdx ? { ...r, ...patch } : r)),
+          }
           : s,
       ),
     });
@@ -434,16 +434,16 @@ function SendListForm({
       sections: sections.map((s, i) =>
         i === sIdx
           ? {
-              ...s,
-              rows: [
-                ...s.rows,
-                {
-                  reply_id: `row_${totalRows + 1}`,
-                  title: t("optionN", { n: totalRows + 1 }),
-                  next_node_key: "",
-                },
-              ],
-            }
+            ...s,
+            rows: [
+              ...s.rows,
+              {
+                reply_id: `row_${totalRows + 1}`,
+                title: t("optionN", { n: totalRows + 1 }),
+                next_node_key: "",
+              },
+            ],
+          }
           : s,
       ),
     });
@@ -1040,19 +1040,26 @@ function SendMediaForm({
         rows={2}
       />
 
-      {isDocument && (
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">
-            {t("filenameLabel")}
-          </label>
-          <Input
-            value={cfg.filename ?? ""}
-            onChange={(e) => onUpdateConfig({ filename: e.target.value })}
-            placeholder={t("filenamePlaceholder")}
-            className="bg-muted text-xs"
-          />
-        </div>
-      )}
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">
+          {t("filenameLabel")}
+        </label>
+        <Input
+          value={cfg.filename ?? ""}
+          onChange={(e) => onUpdateConfig({ filename: e.target.value })}
+          placeholder={t("filenamePlaceholder")}
+          className="bg-muted text-xs"
+        />
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          {isDocument
+            ? t("filenameDocHelp", {
+                default: "Name shown to WhatsApp recipients for this document.",
+              })
+            : t("filenameMediaHelp", {
+                default: "Display name for this media on the canvas and in messages.",
+              })}
+        </p>
+      </div>
 
       <NextNodeRow
         value={cfg.next_node_key ?? ""}

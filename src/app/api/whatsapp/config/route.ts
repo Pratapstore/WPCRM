@@ -29,6 +29,7 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { resolveVerifyTokenForSave } from '@/lib/whatsapp/verify-token'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { getBaileysSession } from '@/lib/whatsapp/baileys-service'
 import { getT } from '@/lib/i18n/translate'
 
 const t = getT('Api')
@@ -146,6 +147,18 @@ export async function GET() {
     }
 
     if (!config) {
+      const baileys = getBaileysSession(accountId);
+      if (baileys.status === 'connected') {
+        return NextResponse.json({
+          connected: true,
+          mode: 'baileys',
+          phone_info: {
+            display_phone_number: baileys.phoneNumber || 'Linked WhatsApp',
+            verified_name: baileys.pushName || 'WhatsApp Linked Device',
+          },
+        });
+      }
+
       return NextResponse.json(
         {
           connected: false,
@@ -228,6 +241,13 @@ export async function GET() {
           error: explained.summary,
         }
       }
+    }
+
+    if (config.status !== 'connected') {
+      void supabase
+        .from('whatsapp_config')
+        .update({ status: 'connected', updated_at: new Date().toISOString() })
+        .eq('account_id', accountId)
     }
 
     return NextResponse.json({

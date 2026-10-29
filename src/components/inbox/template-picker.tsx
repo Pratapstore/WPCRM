@@ -20,7 +20,9 @@ import {
   ChevronRight,
   LayoutTemplate,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
+import { toast } from "sonner";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useTranslations } from "next-intl";
 
@@ -83,10 +85,34 @@ export function TemplatePicker({
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [params, setParams] = useState<string[]>([]);
   const [headerText, setHeaderText] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
+
+  const handleSyncTemplates = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/whatsapp/templates/sync", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to sync templates");
+      }
+      toast.success("Templates synced from Meta!");
+      const supabase = createClient();
+      const { data: refreshed } = await supabase
+        .from("message_templates")
+        .select("*")
+        .eq("status", "APPROVED")
+        .order("created_at", { ascending: false });
+      setTemplates((refreshed as MessageTemplate[]) ?? []);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -191,10 +217,30 @@ export function TemplatePicker({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="border-border bg-popover sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-            <LayoutTemplate className="h-4 w-4 text-primary" />
-            {selected ? selected.name : t("sendTemplate")}
-          </DialogTitle>
+          <div className="flex items-center justify-between pr-6">
+            <DialogTitle className="flex items-center gap-2 text-popover-foreground">
+              <LayoutTemplate className="h-4 w-4 text-primary" />
+              {selected ? selected.name : t("sendTemplate")}
+            </DialogTitle>
+            {!selected && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={syncing || loading}
+                onClick={handleSyncTemplates}
+                className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                title="Sync newest approved templates from Meta"
+              >
+                {syncing ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 text-primary" />
+                )}
+                <span>Sync from Meta</span>
+              </Button>
+            )}
+          </div>
           <DialogDescription className="text-muted-foreground">
             {selected
               ? t("fillPlaceholders")
@@ -214,6 +260,23 @@ export function TemplatePicker({
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t("noApprovedTemplatesHint")}
                 </p>
+                <div className="mt-4 flex items-center justify-center">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={syncing}
+                    onClick={handleSyncTemplates}
+                    className="gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/10"
+                  >
+                    {syncing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Sync Approved Templates from Meta
+                  </Button>
+                </div>
               </div>
             ) : (
               templates.map((t) => (

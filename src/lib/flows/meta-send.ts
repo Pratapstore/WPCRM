@@ -15,6 +15,11 @@ import {
 } from '@/lib/whatsapp/phone-utils'
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity'
 import { assertConversationInAccount } from '@/lib/whatsapp/conversation-scope'
+import {
+  isBaileysConnected,
+  hasBaileysSession,
+  sendBaileysMessage,
+} from '@/lib/whatsapp/baileys-service'
 import { supabaseAdmin } from './admin-client'
 import { getT } from '@/lib/i18n/translate'
 
@@ -118,41 +123,58 @@ export async function engineSendText(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    args.accountId,
-  )
-
-  const attempt = async (phone: string): Promise<string> => {
-    const r = await sendTextMessage({
-      phoneNumberId,
-      accessToken,
-      to: phone,
-      text: args.text,
-    })
-    return r.messageId
-  }
-
-  const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
-  let workingPhone = sanitized
+  const isBaileys = isBaileysConnected(args.accountId)
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
-    }
-  }
-  if (lastError) throw lastError
 
-  if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+  if (isBaileys) {
+    const res = await sendBaileysMessage(args.accountId, sanitized, { text: args.text })
+    waMessageId = res.messageId
+  } else {
+    let metaCreds: { phoneNumberId: string; accessToken: string } | null = null
+    try {
+      metaCreds = await loadAccountMetaCredentials(db, args.accountId)
+    } catch (metaErr) {
+      if (hasBaileysSession(args.accountId)) {
+        const res = await sendBaileysMessage(args.accountId, sanitized, { text: args.text })
+        waMessageId = res.messageId
+      } else {
+        throw metaErr
+      }
+    }
+
+    if (metaCreds) {
+      const { phoneNumberId, accessToken } = metaCreds
+      const attempt = async (phone: string): Promise<string> => {
+        const r = await sendTextMessage({
+          phoneNumberId,
+          accessToken,
+          to: phone,
+          text: args.text,
+        })
+        return r.messageId
+      }
+
+      const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
+      let workingPhone = sanitized
+      let lastError: unknown = null
+      for (const v of variants) {
+        try {
+          waMessageId = await attempt(v)
+          workingPhone = v
+          lastError = null
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (!isRecipientNotAllowedError(msg)) throw err
+          lastError = err
+        }
+      }
+      if (lastError) throw lastError
+
+      if (sendTarget.isPhone && workingPhone !== sanitized) {
+        await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+      }
+    }
   }
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -232,44 +254,67 @@ export async function engineSendMedia(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    args.accountId,
-  )
-
-  const attempt = async (phone: string): Promise<string> => {
-    const r = await sendMediaMessage({
-      phoneNumberId,
-      accessToken,
-      to: phone,
-      kind: args.kind,
-      link: args.link,
-      caption: args.caption,
-      filename: args.filename,
-    })
-    return r.messageId
-  }
-
-  const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
-  let workingPhone = sanitized
+  const isBaileys = isBaileysConnected(args.accountId)
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
-    }
-  }
-  if (lastError) throw lastError
 
-  if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+  if (isBaileys) {
+    const res = await sendBaileysMessage(args.accountId, sanitized, {
+      mediaUrl: args.link,
+      caption: args.caption,
+    })
+    waMessageId = res.messageId
+  } else {
+    let metaCreds: { phoneNumberId: string; accessToken: string } | null = null
+    try {
+      metaCreds = await loadAccountMetaCredentials(db, args.accountId)
+    } catch (metaErr) {
+      if (hasBaileysSession(args.accountId)) {
+        const res = await sendBaileysMessage(args.accountId, sanitized, {
+          mediaUrl: args.link,
+          caption: args.caption,
+        })
+        waMessageId = res.messageId
+      } else {
+        throw metaErr
+      }
+    }
+
+    if (metaCreds) {
+      const { phoneNumberId, accessToken } = metaCreds
+      const attempt = async (phone: string): Promise<string> => {
+        const r = await sendMediaMessage({
+          phoneNumberId,
+          accessToken,
+          to: phone,
+          kind: args.kind,
+          link: args.link,
+          caption: args.caption,
+          filename: args.filename,
+        })
+        return r.messageId
+      }
+
+      const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
+      let workingPhone = sanitized
+      let lastError: unknown = null
+      for (const v of variants) {
+        try {
+          waMessageId = await attempt(v)
+          workingPhone = v
+          lastError = null
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (!isRecipientNotAllowedError(msg)) throw err
+          lastError = err
+        }
+      }
+      if (lastError) throw lastError
+
+      if (sendTarget.isPhone && workingPhone !== sanitized) {
+        await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+      }
+    }
   }
 
   // content_type='image'|'video'|'document' — these are already in the
@@ -388,64 +433,121 @@ async function sendInteractiveViaMeta(
   }
   const sanitized = sendTarget.target
 
-  const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
-    db,
-    input.accountId,
-  )
-
-  const attempt = async (phone: string): Promise<string> => {
-    if (input.kind === 'buttons') {
-      const r = await sendInteractiveButtons({
-        phoneNumberId,
-        accessToken,
-        to: phone,
-        bodyText: input.bodyText,
-        buttons: input.buttons,
-        headerText: input.headerText,
-        footerText: input.footerText,
-      })
-      return r.messageId
-    }
-    const safeLabel =
-      Array.from(input.buttonLabel.trim()).slice(0, 20).join('').trim() ||
-      'View options'
-    const safeBody = input.bodyText.trim() || 'Please choose an option:'
-    const r = await sendInteractiveList({
-      phoneNumberId,
-      accessToken,
-      to: phone,
-      bodyText: safeBody,
-      buttonLabel: safeLabel,
-      sections: input.sections,
-      headerText: input.headerText,
-      footerText: input.footerText,
-    })
-    return r.messageId
-  }
-
-  // Same phone-variant retry as automations/meta-send.ts. Numbers
-  // registered with/without a trunk 0 + Meta's sandbox quirks all
-  // need this to reliably land a message.
-  const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
-  let workingPhone = sanitized
+  const isBaileys = isBaileysConnected(input.accountId)
   let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
-    }
-  }
-  if (lastError) throw lastError
 
-  if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+  const formatBaileysInteractiveText = (): string => {
+    const parts: string[] = []
+    if (input.headerText?.trim()) {
+      parts.push(`*${input.headerText.trim()}*`)
+    }
+    if (input.bodyText?.trim()) {
+      parts.push(input.bodyText.trim())
+    }
+    if (input.kind === 'buttons' && input.buttons?.length) {
+      const buttonLines = input.buttons.map((b, i) => {
+        const numEmoji = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'][i] || `[${i + 1}]`
+        return `${numEmoji} *${b.title}*`
+      })
+      parts.push(buttonLines.join('\n'))
+      parts.push(`👉 _Reply with the number or option title_`)
+    } else if (input.kind === 'list' && input.sections?.length) {
+      let optCount = 1
+      for (const sec of input.sections) {
+        if (sec.title?.trim()) {
+          parts.push(`📌 *${sec.title.trim()}*`)
+        }
+        const rowLines = sec.rows.map((r) => {
+          const desc = r.description?.trim() ? ` — ${r.description.trim()}` : ''
+          const line = `${optCount}️⃣ *${r.title}*${desc}`
+          optCount++
+          return line
+        })
+        parts.push(rowLines.join('\n'))
+      }
+      parts.push(`👉 _Reply with the number or option title_`)
+    }
+    if (input.footerText?.trim()) {
+      parts.push(`_${input.footerText.trim()}_`)
+    }
+    return parts.join('\n\n')
+  }
+
+  if (isBaileys) {
+    const formattedText = formatBaileysInteractiveText()
+    const res = await sendBaileysMessage(input.accountId, sanitized, {
+      text: formattedText,
+    })
+    waMessageId = res.messageId
+  } else {
+    let metaCreds: { phoneNumberId: string; accessToken: string } | null = null
+    try {
+      metaCreds = await loadAccountMetaCredentials(db, input.accountId)
+    } catch (metaErr) {
+      if (hasBaileysSession(input.accountId)) {
+        const formattedText = formatBaileysInteractiveText()
+        const res = await sendBaileysMessage(input.accountId, sanitized, {
+          text: formattedText,
+        })
+        waMessageId = res.messageId
+      } else {
+        throw metaErr
+      }
+    }
+
+    if (metaCreds) {
+      const { phoneNumberId, accessToken } = metaCreds
+      const attempt = async (phone: string): Promise<string> => {
+        if (input.kind === 'buttons') {
+          const r = await sendInteractiveButtons({
+            phoneNumberId,
+            accessToken,
+            to: phone,
+            bodyText: input.bodyText,
+            buttons: input.buttons,
+            headerText: input.headerText,
+            footerText: input.footerText,
+          })
+          return r.messageId
+        }
+        const safeLabel =
+          Array.from(input.buttonLabel.trim()).slice(0, 20).join('').trim() ||
+          'View options'
+        const safeBody = input.bodyText.trim() || 'Please choose an option:'
+        const r = await sendInteractiveList({
+          phoneNumberId,
+          accessToken,
+          to: phone,
+          bodyText: safeBody,
+          buttonLabel: safeLabel,
+          sections: input.sections,
+          headerText: input.headerText,
+          footerText: input.footerText,
+        })
+        return r.messageId
+      }
+
+      const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
+      let workingPhone = sanitized
+      let lastError: unknown = null
+      for (const v of variants) {
+        try {
+          waMessageId = await attempt(v)
+          workingPhone = v
+          lastError = null
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (!isRecipientNotAllowedError(msg)) throw err
+          lastError = err
+        }
+      }
+      if (lastError) throw lastError
+
+      if (sendTarget.isPhone && workingPhone !== sanitized) {
+        await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+      }
+    }
   }
 
   // Persist the bot's prompt to the messages table so it appears in

@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -209,11 +210,46 @@ function InboxPageInner() {
 
       const { data } = await supabase
         .from("whatsapp_config")
-        .select("status")
+        .select("status, phone_number_id")
         .eq("account_id", accountId)
         .maybeSingle();
 
-      setWhatsappConnected(data?.status === "connected");
+      if (data?.status === "connected") {
+        setWhatsappConnected(true);
+        return;
+      }
+
+      // Check if Baileys Multi-Device is connected
+      try {
+        const bRes = await fetch("/api/whatsapp/baileys", { cache: "no-store" });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          const isConnected =
+            bData.status === "connected" ||
+            (Array.isArray(bData.sessions) &&
+              bData.sessions.some((s: any) => s.status === "connected"));
+          if (isConnected) {
+            setWhatsappConnected(true);
+            return;
+          }
+        }
+      } catch {}
+
+      // If phone_number_id is present, check Meta API health
+      if (data?.phone_number_id) {
+        try {
+          const cfgRes = await fetch("/api/whatsapp/config", { cache: "no-store" });
+          if (cfgRes.ok) {
+            const cfgData = await cfgRes.json();
+            if (cfgData.connected) {
+              setWhatsappConnected(true);
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      setWhatsappConnected(false);
     };
 
     checkConnection();
@@ -575,6 +611,12 @@ function InboxPageInner() {
           <p className="text-xs text-amber-400">
             {t("whatsappNotConnected")}
           </p>
+          <Link
+            href="/settings?tab=whatsapp"
+            className="ml-2 inline-flex items-center gap-1 rounded bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/30 transition-colors"
+          >
+            Connect Now &rarr;
+          </Link>
         </div>
       )}
 

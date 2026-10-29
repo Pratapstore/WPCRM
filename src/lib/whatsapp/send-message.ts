@@ -368,10 +368,36 @@ export async function sendMessageToConversation(
 
   const attempt = async (phone: string): Promise<string> => {
     if (isBaileysActive) {
+      let textToSend = contentText || '';
+      if (messageType === 'interactive' && interactivePayload) {
+        const parts: string[] = [];
+        if (interactivePayload.header) parts.push(`*${interactivePayload.header}*`);
+        if (interactivePayload.body) parts.push(interactivePayload.body);
+        if (interactivePayload.kind === 'buttons' && interactivePayload.buttons?.length) {
+          const actionCards = interactivePayload.buttons
+            .map((b) => `🔘 *[ ${b.title} ]*`)
+            .join('\n');
+          parts.push(`━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions (Tap / Reply):*\n${actionCards}`);
+        } else if (interactivePayload.kind === 'list' && interactivePayload.sections?.length) {
+          const listLines: string[] = [];
+          let count = 1;
+          for (const sec of interactivePayload.sections) {
+            if (sec.title) listLines.push(`\n📌 *${sec.title}*`);
+            for (const row of sec.rows) {
+              listLines.push(`${count}. *${row.title}*${row.description ? ` (${row.description})` : ''}`);
+              count++;
+            }
+          }
+          parts.push(listLines.join('\n'));
+        }
+        if (interactivePayload.footer) parts.push(`_${interactivePayload.footer}_`);
+        textToSend = parts.join('\n\n');
+      }
+
       const res = await sendBaileysMessage(accountId, phone, {
-        text: contentText || undefined,
+        text: textToSend || undefined,
         mediaUrl: mediaUrl || undefined,
-        caption: contentText || undefined,
+        caption: textToSend || undefined,
       });
       return res.messageId;
     }
@@ -410,7 +436,8 @@ export async function sendMessageToConversation(
           accessToken,
           to: phone,
           bodyText: p.body,
-          headerText: p.header || undefined,
+          headerText: !mediaUrl ? (p.header || undefined) : undefined,
+          headerImage: mediaUrl || undefined,
           footerText: p.footer || undefined,
           buttons: p.buttons,
           contextMessageId,

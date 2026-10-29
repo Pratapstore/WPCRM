@@ -22,7 +22,13 @@ import {
   Plus,
   MessageSquareDashed,
   Zap,
+  Package,
+  Lock,
+  Unlock,
+  ExternalLink,
+  Clock,
 } from "lucide-react";
+import { SendProductDialog } from "@/components/products/send-product-dialog";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -112,6 +118,7 @@ interface MediaDraft {
 interface MessageComposerProps {
   conversationId: string;
   sessionExpired: boolean;
+  contactPhone?: string | null;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
   onSendInteractive: (payload: InteractiveMessagePayload, replyToId?: string) => void;
@@ -134,6 +141,7 @@ const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
 export function MessageComposer({
   conversationId,
   sessionExpired,
+  contactPhone,
   onSend,
   onSendMedia,
   onSendInteractive,
@@ -163,12 +171,13 @@ export function MessageComposer({
     return () => mq.removeEventListener?.("change", apply);
   }, []);
 
-  // Interactive-message builder dialog + quick-reply picker.
+  // Interactive-message builder dialog + quick-reply picker + product catalog.
   const [interactiveOpen, setInteractiveOpen] = useState(false);
   const [interactivePayload, setInteractivePayload] =
     useState<InteractiveMessagePayload>(blankButtonsPayload);
   const [savingQuickReply, setSavingQuickReply] = useState(false);
   const [quickReplyOpen, setQuickReplyOpen] = useState(false);
+  const [productCatalogOpen, setProductCatalogOpen] = useState(false);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -204,8 +213,16 @@ export function MessageComposer({
   // every capability — so the disabled branch is a no-op there.
   const canSend = useCan("send-messages");
   const readOnly = !canSend;
-  // Media (like free-form text) is only allowed inside the 24h window.
-  const inputsDisabled = readOnly || sessionExpired;
+
+  // 24-hour window manual unlock toggle so agents are never permanently blocked
+  const [unlocked, setUnlocked] = useState(false);
+  useEffect(() => {
+    setUnlocked(false);
+  }, [conversationId]);
+
+  const isBlocked = sessionExpired && !unlocked;
+  // Media (like free-form text) is only allowed inside the 24h window unless unlocked
+  const inputsDisabled = readOnly || isBlocked;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -237,7 +254,7 @@ export function MessageComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending || sessionExpired) return;
+    if (!trimmed || sending || isBlocked) return;
 
     setSending(true);
     try {
@@ -249,7 +266,7 @@ export function MessageComposer({
     } finally {
       setSending(false);
     }
-  }, [text, sending, sessionExpired, onSend, replyTo?.id]);
+  }, [text, sending, isBlocked, onSend, replyTo?.id]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -564,19 +581,70 @@ export function MessageComposer({
         </div>
       )}
       {sessionExpired && (
-        <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
-          <p className="text-xs text-amber-400">
-            {t("sessionExpiredHint")}
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs text-amber-400 hover:text-amber-300"
-            onClick={onOpenTemplates}
-          >
-            <LayoutTemplate className="mr-1 h-3 w-3" />
-            {t("templates")}
-          </Button>
+        <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-amber-300 font-medium">
+              <Clock className="h-4 w-4 shrink-0 text-amber-400" />
+              <span>24-Hour WhatsApp Session Expired</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {contactPhone && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 gap-1"
+                  onClick={() => {
+                    const clean = contactPhone.replace(/\D/g, "");
+                    const textParam = text.trim() ? `&text=${encodeURIComponent(text.trim())}` : "";
+                    window.open(`https://api.whatsapp.com/send?phone=${clean}${textParam}`, "_blank");
+                  }}
+                  title="Open chat on WhatsApp Web (No 24h window restriction)"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Chat on WhatsApp Web
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-500/20 gap-1"
+                onClick={onOpenTemplates}
+              >
+                <LayoutTemplate className="h-3 w-3" />
+                Templates
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-amber-400 hover:text-amber-200 hover:bg-amber-500/15 gap-1"
+                onClick={() => setUnlocked(!unlocked)}
+              >
+                {unlocked ? (
+                  <>
+                    <Lock className="h-3 w-3" />
+                    Lock
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-3 w-3" />
+                    Unlock Composer
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+          {unlocked ? (
+            <p className="mt-1.5 text-[11px] text-amber-200/80">
+              🔓 Composer unlocked. You can type freely and send directly via WhatsApp Web (bypasses 24h limit) or attempt CRM send.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-amber-400/80">
+              Customer hasn't messaged in &gt;24 hours. Send via WhatsApp Web, use an approved template, or click &quot;Unlock Composer&quot;.
+            </p>
+          )}
         </div>
       )}
 
@@ -707,6 +775,10 @@ export function MessageComposer({
               <Plus className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-border bg-popover">
+              <DropdownMenuItem onClick={() => setProductCatalogOpen(true)}>
+                <Package className="mr-2 h-4 w-4 text-emerald-400" />
+                Send Product Catalog
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openInteractiveBuilder()}>
                 <MessageSquareDashed className="mr-2 h-4 w-4" />
                 {t("interactiveMessage")}
@@ -756,11 +828,11 @@ export function MessageComposer({
             placeholder={
               readOnly
                 ? t("readOnlyPlaceholder")
-                : sessionExpired
-                  ? t("sessionExpiredPlaceholder")
+                : isBlocked
+                  ? "24-Hour session expired — Click 'Unlock Composer' or use a template"
                   : t("typeMessagePlaceholder")
             }
-            disabled={sessionExpired || readOnly}
+            disabled={isBlocked || readOnly}
             rows={1}
             // Textarea keeps its own inline title — the GatedButton
             // wrapping pattern doesn't apply to non-button inputs.
@@ -768,15 +840,32 @@ export function MessageComposer({
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
               "order-1 min-w-0 flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50 sm:order-2",
-              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
+              (isBlocked || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
+
+          {unlocked && sessionExpired && contactPhone && text.trim() && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const clean = contactPhone.replace(/\D/g, "");
+                const encoded = encodeURIComponent(text.trim());
+                window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${encoded}`, "_blank");
+              }}
+              className="order-1 h-9 bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 text-xs gap-1 sm:order-3 shadow-sm font-medium"
+              title="Send directly via WhatsApp Web (Bypasses 24-hour limit)"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">WhatsApp Web</span>
+            </Button>
+          )}
 
           <GatedButton
             size="sm"
             canAct={!readOnly}
             gateReason={tGate("reasons.sendMessages")}
-            disabled={!text.trim() || sessionExpired || sending}
+            disabled={!text.trim() || isBlocked || sending}
             onClick={handleSend}
             className="order-1 h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40 sm:order-3"
           >
@@ -832,6 +921,13 @@ export function MessageComposer({
         open={quickReplyOpen}
         onOpenChange={setQuickReplyOpen}
         onPick={handlePickQuickReply}
+      />
+
+      {/* Product Catalog Picker & Sender Dialog */}
+      <SendProductDialog
+        open={productCatalogOpen}
+        onOpenChange={setProductCatalogOpen}
+        prefilledContact={{ conversationId }}
       />
     </div>
   );

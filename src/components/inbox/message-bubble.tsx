@@ -20,8 +20,11 @@ import {
   ExternalLink,
   Phone,
   Copy,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
@@ -52,6 +55,8 @@ interface MessageBubbleProps {
    * stays inline and non-clickable.
    */
   onOpenMedia?: (messageId: string) => void;
+  contactPhone?: string | null;
+  onOpenTemplates?: () => void;
 }
 
 /**
@@ -331,7 +336,14 @@ function MessageContent({
       //    migration 035 backfilled the column): show the body text plainly —
       //    it is our own message, NOT a customer tap.
       if (message.interactive_payload) {
-        return <LocalizedInteractivePreview payload={message.interactive_payload} />;
+        return (
+          <div className="flex flex-col gap-1.5">
+            {message.media_url && (
+              <MediaImageBubble message={message} onOpen={openMedia} t={t} />
+            )}
+            <LocalizedInteractivePreview payload={message.interactive_payload} />
+          </div>
+        );
       }
       if (message.sender_type === "customer") {
         return (
@@ -369,12 +381,21 @@ export function MessageBubble({
   reactions,
   onToggleReaction,
   onOpenMedia,
+  contactPhone,
+  onOpenTemplates,
 }: MessageBubbleProps) {
   const t = useTranslations("Inbox.bubble");
 
   const isAgent = message.sender_type === "agent" || message.sender_type === "bot";
   const time = format(new Date(message.created_at), "HH:mm");
   const failure = isAgent ? failureReason(message) : null;
+
+  const is24hExpired =
+    isAgent &&
+    message.status === "failed" &&
+    (message.error_code === 131047 ||
+      Boolean(message.error_title?.toLowerCase().includes("re-engagement")) ||
+      Boolean(message.error_details?.toLowerCase().includes("24 hours")));
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -441,14 +462,69 @@ export function MessageBubble({
           {isAgent && <StatusIcon status={message.status} title={failure} />}
         </div>
       </div>
-      {failure && (
+      {is24hExpired ? (
+        <div className="mt-2 max-w-sm rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200 shadow-sm animate-in fade-in-0 duration-200">
+          <div className="flex items-center gap-1.5 font-medium text-amber-300">
+            <Clock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            <span>24-Hour WhatsApp Session Expired</span>
+          </div>
+          <p className="mt-1 text-[11px] text-amber-200/80 leading-relaxed">
+            Customer has not replied in &gt;24 hours. Send directly via WhatsApp Web (no limit) or use an approved template to re-engage.
+          </p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {contactPhone && (
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                className="h-7 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] gap-1 px-2.5 shadow-sm font-medium"
+                onClick={() => {
+                  const clean = contactPhone.replace(/\D/g, "");
+                  const text = encodeURIComponent(message.content_text || "");
+                  window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${text}`, "_blank");
+                }}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Send via WhatsApp Web
+              </Button>
+            )}
+            {onOpenTemplates && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 border-amber-500/40 text-amber-300 hover:bg-amber-500/20 text-[11px] gap-1 px-2.5"
+                onClick={onOpenTemplates}
+              >
+                <LayoutTemplate className="h-3 w-3" />
+                Templates
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-zinc-300 hover:bg-white/10 text-[11px] gap-1 px-2"
+              onClick={() => {
+                if (message.content_text) {
+                  navigator.clipboard.writeText(message.content_text);
+                  toast.success("Message copied to clipboard");
+                }
+              }}
+            >
+              <Copy className="h-3 w-3" />
+              Copy
+            </Button>
+          </div>
+        </div>
+      ) : failure ? (
         <p
           className="mt-0.5 px-1 text-[10px] leading-tight text-muted-foreground"
           title={failure}
         >
           {t("notDelivered")}: {failure}
         </p>
-      )}
+      ) : null}
       {reactions && reactions.length > 0 && onToggleReaction && (
         <MessageReactions
           reactions={reactions}

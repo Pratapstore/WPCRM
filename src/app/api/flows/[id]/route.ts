@@ -175,7 +175,11 @@ export async function PUT(
       .eq('flow_id', id)
       .order('created_at', { ascending: true }),
   ])
-  return NextResponse.json({ flow, nodes: nodes ?? [] })
+  return NextResponse.json({
+    flow,
+    nodes: nodes ?? [],
+    issues: activeBlockers ?? [],
+  })
 }
 
 async function validateIfActive(

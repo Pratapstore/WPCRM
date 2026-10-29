@@ -51,7 +51,7 @@ import {
 } from "@/lib/flows/validate";
 import { useTranslations } from "next-intl";
 import { getT } from "@/lib/i18n/translate";
-import { unlinkNodeReferences } from "@/lib/flows/edges";
+import { unlinkNodeReferences, renameNodeReferences } from "@/lib/flows/edges";
 import type { FlowNodeRow, FlowRow } from "@/lib/flows/types";
 import { NODE_META, slugify, type BuilderNode, type NodeType } from "./shared";
 
@@ -103,6 +103,7 @@ export interface FlowEditorContextValue {
     positions: Record<string, { x: number; y: number }>,
   ) => void;
   removeNode: (key: string) => void;
+  renameNodeKey: (oldKey: string, newKey: string) => boolean;
 
   // Actions
   save: () => Promise<void>;
@@ -420,14 +421,56 @@ export function FlowEditorProvider({
   }, [initialFlow.id, router, state.name, t]);
 
   // ---- Node mutations ----
-  const updateNode = useCallback(
-    (key: string, patch: Partial<BuilderNode>) => {
+  const renameNodeKey = useCallback(
+    (oldKey: string, rawNewKey: string): boolean => {
+      const newKey = slugify(rawNewKey, oldKey);
+      if (!newKey) return false;
+      if (newKey === oldKey) return true;
+
+      // Check if target key is already taken by another node
+      if (state.nodes.some((n) => n.node_key === newKey && n.node_key !== oldKey)) {
+        return false;
+      }
+
       setState((s) => ({
         ...s,
-        nodes: s.nodes.map((n) =>
-          n.node_key === key ? { ...n, ...patch } : n,
-        ),
+        nodes: renameNodeReferences(s.nodes, oldKey, newKey),
+        entry_node_id: s.entry_node_id === oldKey ? newKey : s.entry_node_id,
       }));
+      return true;
+    },
+    [state.nodes, setState],
+  );
+
+  const updateNode = useCallback(
+    (key: string, patch: Partial<BuilderNode>) => {
+      setState((s) => {
+        let currentNodes = s.nodes;
+        let entryId = s.entry_node_id;
+        let effectiveKey = key;
+
+        if (patch.node_key && patch.node_key !== key) {
+          const newKey = slugify(patch.node_key, key);
+          if (newKey && !currentNodes.some((n) => n.node_key === newKey && n.node_key !== key)) {
+            currentNodes = renameNodeReferences(currentNodes, key, newKey);
+            if (entryId === key) entryId = newKey;
+            effectiveKey = newKey;
+          }
+        }
+
+        const { node_key: _, ...restPatch } = patch;
+        if (Object.keys(restPatch).length > 0) {
+          currentNodes = currentNodes.map((n) =>
+            n.node_key === effectiveKey ? { ...n, ...restPatch } : n,
+          );
+        }
+
+        return {
+          ...s,
+          nodes: currentNodes,
+          entry_node_id: entryId,
+        };
+      });
     },
     [setState],
   );
@@ -535,6 +578,7 @@ export function FlowEditorProvider({
       updateNodePosition,
       updateNodePositions,
       removeNode,
+      renameNodeKey,
       save,
       setStatus,
       deleteFlow,
@@ -556,6 +600,7 @@ export function FlowEditorProvider({
       updateNodePosition,
       updateNodePositions,
       removeNode,
+      renameNodeKey,
       save,
       setStatus,
       deleteFlow,

@@ -931,6 +931,7 @@ export const INTERACTIVE_LIMITS = {
   maxButtons: 3,
   buttonTitleMaxLength: 20,
   maxListSections: 10,
+  listSectionTitleMaxLength: 24,
   maxListRowsTotal: 10,
   listRowTitleMaxLength: 24,
   listRowDescriptionMaxLength: 72,
@@ -954,6 +955,8 @@ export interface SendInteractiveButtonsArgs {
   bodyText: string
   /** Optional plain-text header (≤ 60 chars). */
   headerText?: string
+  /** Optional image URL header. When provided, an image header is used. */
+  headerImage?: string
   /** Optional grey footer line under the buttons (≤ 60 chars). */
   footerText?: string
   /** 1–3 buttons. Validated against Meta's limits before sending. */
@@ -975,10 +978,14 @@ export async function sendInteractiveButtons(
 ): Promise<MetaSendResult> {
   const {
     phoneNumberId, accessToken, to,
-    bodyText, headerText, footerText, buttons, contextMessageId,
+    bodyText, headerText, headerImage, footerText, buttons, contextMessageId,
   } = args
   validateInteractiveBody(bodyText)
-  validateInteractiveHeaderFooter(headerText, footerText)
+  if (headerText) {
+    validateInteractiveHeaderFooter(headerText, footerText)
+  } else if (footerText) {
+    validateInteractiveHeaderFooter(undefined, footerText)
+  }
   if (buttons.length < 1 || buttons.length > INTERACTIVE_LIMITS.maxButtons) {
     throw new Error(
       ti('buttonCount', { max: INTERACTIVE_LIMITS.maxButtons, got: buttons.length })
@@ -1012,7 +1019,11 @@ export async function sendInteractiveButtons(
       })),
     },
   }
-  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (headerImage) {
+    interactive.header = { type: 'image', image: { link: headerImage } }
+  } else if (headerText) {
+    interactive.header = { type: 'text', text: headerText }
+  }
   if (footerText) interactive.footer = { text: footerText }
 
   const body: Record<string, unknown> = {
@@ -1147,11 +1158,11 @@ export async function sendInteractiveList(
           }
         }
         return sections.map((s, idx) => ({
-          ...(s.title?.trim()
-            ? { title: s.title.trim() }
+          title: s.title?.trim()
+            ? s.title.trim()
             : sections.length > 1
-              ? { title: idx === 0 ? 'Options' : `Options ${idx + 1}` }
-              : {}),
+              ? (idx === 0 ? 'Options' : `Options ${idx + 1}`)
+              : 'Options',
           rows: s.rows.map((r) => ({
             id: r.id,
             title: r.title,

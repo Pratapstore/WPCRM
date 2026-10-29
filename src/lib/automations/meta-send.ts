@@ -16,6 +16,11 @@ import {
   templateContentText,
   templateHeaderMediaUrl,
 } from '@/lib/whatsapp/template-body'
+import {
+  isBaileysConnected,
+  hasBaileysSession,
+  sendBaileysMessage,
+} from '@/lib/whatsapp/baileys-service'
 import { supabaseAdmin } from './admin-client'
 import { getT } from '@/lib/i18n/translate'
 
@@ -148,16 +153,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   }
   const sanitized = sendTarget.target
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error(t('send.notConfigured'))
-  }
-
-  const accessToken = decrypt(config.access_token)
+  const isBaileys = isBaileysConnected(input.accountId)
+  let waMessageId = ''
 
   // Local template row. A missing row is fine: the send still goes
   // out, we just can't reconstruct the text the customer saw.
@@ -173,64 +170,105 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
         ).row
       : null
 
-  const attempt = async (phone: string): Promise<string> => {
+  const content_text =
+    input.kind === 'text'
+      ? input.text
+      : templateContentText(templateRow, input.params ?? [])
+
+  if (isBaileys) {
     if (input.kind === 'template') {
-      const r = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        templateName: input.templateName,
-        language: input.language,
-        template: templateRow ?? undefined,
-        params: input.params,
+      const res = await sendBaileysMessage(input.accountId, sanitized, {
+        text: content_text || undefined,
+        mediaUrl: templateHeaderMediaUrl(templateRow) || undefined,
       })
-      return r.messageId
+      waMessageId = res.messageId
+    } else {
+      const res = await sendBaileysMessage(input.accountId, sanitized, {
+        text: input.text,
+      })
+      waMessageId = res.messageId
     }
-    const r = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      to: phone,
-      text: input.text,
-    })
-    return r.messageId
-  }
+  } else {
+    const { data: config, error: configErr } = await db
+      .from('whatsapp_config')
+      .select('*')
+      .eq('account_id', input.accountId)
+      .single()
 
-  // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
-  // numbers registered with/without a trunk 0 both require this to
-  // reliably land a message.
-  const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
-  let workingPhone = sanitized
-  let waMessageId = ''
-  let lastError: unknown = null
-  for (const v of variants) {
-    try {
-      waMessageId = await attempt(v)
-      workingPhone = v
-      lastError = null
-      break
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
-      lastError = err
+    let accessToken = ''
+    if (config?.access_token) {
+      try {
+        accessToken = decrypt(config.access_token)
+      } catch {}
     }
-  }
-  if (lastError) throw lastError
 
-  if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    if (!config || !config.phone_number_id || !accessToken) {
+      if (hasBaileysSession(input.accountId)) {
+        if (input.kind === 'template') {
+          const res = await sendBaileysMessage(input.accountId, sanitized, {
+            text: content_text || undefined,
+            mediaUrl: templateHeaderMediaUrl(templateRow) || undefined,
+          })
+          waMessageId = res.messageId
+        } else {
+          const res = await sendBaileysMessage(input.accountId, sanitized, {
+            text: input.text,
+          })
+          waMessageId = res.messageId
+        }
+      } else {
+        throw new Error(t('send.notConfigured'))
+      }
+    } else {
+      const attempt = async (phone: string): Promise<string> => {
+        if (input.kind === 'template') {
+          const r = await sendTemplateMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            templateName: input.templateName,
+            language: input.language,
+            template: templateRow ?? undefined,
+            params: input.params,
+          })
+          return r.messageId
+        }
+        const r = await sendTextMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          text: input.text,
+        })
+        return r.messageId
+      }
+
+      const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
+      let workingPhone = sanitized
+      let lastError: unknown = null
+      for (const v of variants) {
+        try {
+          waMessageId = await attempt(v)
+          workingPhone = v
+          lastError = null
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (!isRecipientNotAllowedError(msg)) throw err
+          lastError = err
+        }
+      }
+      if (lastError) throw lastError
+
+      if (sendTarget.isPhone && workingPhone !== sanitized) {
+        await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+      }
+    }
   }
 
   // Persist the sent message so it appears in the inbox with a real
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
   const content_type = input.kind === 'template' ? 'template' : 'text'
-  // Templates persist the substituted body, same as the manual and
-  // public-API send paths. This was unconditionally null, so every
-  // automation template send rendered as an empty bubble (issue #483).
-  const content_text =
-    input.kind === 'text'
-      ? input.text
-      : templateContentText(templateRow, input.params ?? [])
   const template_name = input.kind === 'template' ? input.templateName : null
 
   const { error: msgErr } = await db.from('messages').insert({

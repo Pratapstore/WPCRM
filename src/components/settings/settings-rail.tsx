@@ -66,7 +66,7 @@ export function SettingsRail({
           >
             {label ? (
               <div className="hidden px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase lg:block">
-                {t(`groups.${group}`)}
+                {t.has(`groups.${group}`) ? t(`groups.${group}`) : label}
               </div>
             ) : null}
             {items.map((s) => {
@@ -89,7 +89,9 @@ export function SettingsRail({
                   )}
                 >
                   <Icon className="size-4 shrink-0" />
-                  <span className="flex-1">{t(`sections.${s}`)}</span>
+                  <span className="flex-1">
+                    {t.has(`sections.${s}`) ? t(`sections.${s}`) : meta.label}
+                  </span>
                   {hints?.[s] != null ? (
                     <span
                       className={cn(

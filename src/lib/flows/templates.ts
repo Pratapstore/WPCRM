@@ -61,7 +61,7 @@ export interface FlowTemplate {
   name: string;
   description: string;
   /** Used by the gallery to surface a relevant icon. lucide-react name. */
-  icon: "MessageSquare" | "HelpCircle" | "UserPlus";
+  icon: "MessageSquare" | "HelpCircle" | "UserPlus" | "ShoppingBag";
   trigger_type: "keyword" | "first_inbound_message" | "manual";
   trigger_config: KeywordTriggerConfig | Record<string, unknown>;
   entry_node_id: string;
@@ -298,10 +298,229 @@ const LEAD_CAPTURE: FlowTemplate = {
 };
 
 // ============================================================
+// 4. Order Collection & Checkout — A to Z WhatsApp Order Flow
+// ============================================================
+const ORDER_COLLECTION: FlowTemplate = {
+  slug: "order_collection",
+  name: t("order_collection.name"),
+  description: t("order_collection.description"),
+  icon: "ShoppingBag",
+  trigger_type: "keyword",
+  trigger_config: {
+    keywords: keywords("order_collection.keywords"),
+    match_type: "contains",
+  },
+  entry_node_id: "start",
+  nodes: [
+    {
+      node_key: "start",
+      node_type: "start",
+      config: { next_node_key: "catalog_menu" },
+    },
+    {
+      node_key: "catalog_menu",
+      node_type: "send_list",
+      config: {
+        header_text: t("order_collection.welcomeHeader"),
+        text: t("order_collection.welcomeText"),
+        button_label: t("order_collection.browseCatalog"),
+        sections: [
+          {
+            title: t("order_collection.giftsSection"),
+            rows: [
+              {
+                reply_id: "keychain",
+                title: t("order_collection.keychainRow"),
+                description: t("order_collection.keychainDesc"),
+                next_node_key: "gift_variant",
+              },
+              {
+                reply_id: "mug",
+                title: t("order_collection.mugRow"),
+                description: t("order_collection.mugDesc"),
+                next_node_key: "gift_variant",
+              },
+              {
+                reply_id: "frame",
+                title: t("order_collection.frameRow"),
+                description: t("order_collection.frameDesc"),
+                next_node_key: "gift_variant",
+              },
+            ],
+          },
+          {
+            title: t("order_collection.apparelSection"),
+            rows: [
+              {
+                reply_id: "tshirt",
+                title: t("order_collection.tshirtRow"),
+                description: t("order_collection.tshirtDesc"),
+                next_node_key: "apparel_size",
+              },
+              {
+                reply_id: "hoodie",
+                title: t("order_collection.hoodieRow"),
+                description: t("order_collection.hoodieDesc"),
+                next_node_key: "apparel_size",
+              },
+            ],
+          },
+        ],
+      } as SendListNodeConfig,
+    },
+    {
+      node_key: "gift_variant",
+      node_type: "send_buttons",
+      config: {
+        header_text: t("order_collection.giftOptHeader"),
+        text: t("order_collection.giftOptText"),
+        buttons: [
+          {
+            reply_id: "single_photo",
+            title: t("order_collection.giftOptSingle"),
+            next_node_key: "ask_customer_name",
+          },
+          {
+            reply_id: "double_photo",
+            title: t("order_collection.giftOptDouble"),
+            next_node_key: "ask_customer_name",
+          },
+          {
+            reply_id: "spotify_code",
+            title: t("order_collection.giftOptSpotify"),
+            next_node_key: "ask_customer_name",
+          },
+        ],
+      } as SendButtonsNodeConfig,
+    },
+    {
+      node_key: "apparel_size",
+      node_type: "send_buttons",
+      config: {
+        header_text: t("order_collection.sizeHeader"),
+        text: t("order_collection.sizeText"),
+        buttons: [
+          {
+            reply_id: "size_s",
+            title: t("order_collection.sizeSmall"),
+            next_node_key: "ask_customer_name",
+          },
+          {
+            reply_id: "size_m",
+            title: t("order_collection.sizeMedium"),
+            next_node_key: "ask_customer_name",
+          },
+          {
+            reply_id: "size_l",
+            title: t("order_collection.sizeLarge"),
+            next_node_key: "ask_customer_name",
+          },
+        ],
+      } as SendButtonsNodeConfig,
+    },
+    {
+      node_key: "ask_customer_name",
+      node_type: "collect_input",
+      config: {
+        prompt_text: t("order_collection.askName"),
+        var_key: "customer_name",
+        next_node_key: "ask_shipping_address",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "ask_shipping_address",
+      node_type: "collect_input",
+      config: {
+        prompt_text: t("order_collection.askAddress", { name: "{{vars.customer_name}}" }),
+        var_key: "shipping_address",
+        next_node_key: "ask_pincode",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "ask_pincode",
+      node_type: "collect_input",
+      config: {
+        prompt_text: t("order_collection.askPincode"),
+        var_key: "pincode",
+        next_node_key: "ask_payment_mode",
+      } as CollectInputNodeConfig,
+    },
+    {
+      node_key: "ask_payment_mode",
+      node_type: "send_buttons",
+      config: {
+        header_text: t("order_collection.paymentHeader"),
+        text: t("order_collection.paymentText"),
+        buttons: [
+          {
+            reply_id: "pay_upi",
+            title: t("order_collection.payOnlineBtn"),
+            next_node_key: "confirm_prepaid",
+          },
+          {
+            reply_id: "pay_cod",
+            title: t("order_collection.payCodBtn"),
+            next_node_key: "confirm_cod",
+          },
+          {
+            reply_id: "pay_support",
+            title: t("order_collection.paySupportBtn"),
+            next_node_key: "support_handoff",
+          },
+        ],
+      } as SendButtonsNodeConfig,
+    },
+    {
+      node_key: "confirm_prepaid",
+      node_type: "send_message",
+      config: {
+        text: t("order_collection.prepaidConfirm", {
+          name: "{{vars.customer_name}}",
+          address: "{{vars.shipping_address}}",
+          pincode: "{{vars.pincode}}",
+        }),
+        next_node_key: "order_handoff",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "confirm_cod",
+      node_type: "send_message",
+      config: {
+        text: t("order_collection.codConfirm", {
+          name: "{{vars.customer_name}}",
+          address: "{{vars.shipping_address}}",
+          pincode: "{{vars.pincode}}",
+        }),
+        next_node_key: "order_handoff",
+      } as SendMessageNodeConfig,
+    },
+    {
+      node_key: "order_handoff",
+      node_type: "handoff",
+      config: {
+        note: t("order_collection.orderNote", {
+          name: "{{vars.customer_name}}",
+          address: "{{vars.shipping_address}}",
+          pincode: "{{vars.pincode}}",
+        }),
+      } as HandoffNodeConfig,
+    },
+    {
+      node_key: "support_handoff",
+      node_type: "handoff",
+      config: {
+        note: t("order_collection.supportNote"),
+      } as HandoffNodeConfig,
+    },
+  ],
+};
+
+// ============================================================
 // Registry
 // ============================================================
 
 const TEMPLATES: Record<string, FlowTemplate> = {
+  order_collection: ORDER_COLLECTION,
   welcome_menu: WELCOME_MENU,
   faq_bot: FAQ_BOT,
   lead_capture: LEAD_CAPTURE,
@@ -314,3 +533,4 @@ export function getFlowTemplate(slug: string): FlowTemplate | null {
 export function listFlowTemplates(): FlowTemplate[] {
   return Object.values(TEMPLATES);
 }
+
