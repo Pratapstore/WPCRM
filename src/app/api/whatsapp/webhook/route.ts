@@ -803,10 +803,19 @@ async function processMessage(
 
   // 1. Check if this is a Product Action button tap (Order Now, All Products, Chat with Us)
   //    or an active order session (customer is currently in checkout)
+  // Check if contact already has an active Flow Run
+  const { data: existingActiveFlowRun } = await supabaseAdmin()
+    .from('flow_runs')
+    .select('id, flow_id, current_node_key')
+    .eq('account_id', accountId)
+    .eq('contact_id', contactRecord.id)
+    .eq('status', 'active')
+    .maybeSingle()
+
   const isProdAction = isProductAction(interactiveReplyId, contentText, inboundText)
 
-  if (isProdAction) {
-    // Tapping a product action cancels any active flow run so bot doesn't intercept or reprompt
+  if (isProdAction && !existingActiveFlowRun) {
+    // Tapping an external product action outside any flow cancels older stale runs
     await supabaseAdmin()
       .from('flow_runs')
       .update({
@@ -833,7 +842,8 @@ async function processMessage(
     activeOrderSession.state !== 'COMPLETED'
 
   let commerceConsumed = false
-  if (isProdAction || inActiveOrderCheckout) {
+  // Only route to standalone commerce bot if customer is NOT inside an active interactive Flow
+  if (!existingActiveFlowRun && (isProdAction || inActiveOrderCheckout)) {
     try {
       const commerceRes = await processCommerceInboundMessage({
         accountId,
