@@ -801,50 +801,36 @@ async function processMessage(
   // basically for free (one indexed SELECT for the active run).
   const inboundText = contentText ?? message.text?.body ?? ''
 
-  // 1. Check if this is a Product Action button tap (Order Now, All Products, Chat with Us)
-  //    or an active order session (customer is currently in checkout)
-  // Check if contact already has an active Flow Run
-  const { data: existingActiveFlowRun } = await supabaseAdmin()
-    .from('flow_runs')
-    .select('id, flow_id, current_node_key')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactRecord.id)
-    .eq('status', 'active')
-    .maybeSingle()
+  // 1. Dispatch to Flows engine FIRST!
+  // Flows represent the merchant's custom interactive bot logic created in the CRM.
+  // When an active Flow is running or matched, it must take full precedence.
+  let flowConsumed = false
+  const flowResult = await dispatchInboundToFlows({
+    accountId,
+    userId: configOwnerUserId,
+    contactId: contactRecord.id,
+    conversationId: conversation.id,
+    message:
+      interactiveReplyId
+        ? {
+            kind: 'interactive_reply',
+            reply_id: interactiveReplyId,
+            reply_title: contentText ?? '',
+            meta_message_id: message.id,
+          }
+        : {
+            kind: 'text',
+            text: inboundText,
+            meta_message_id: message.id,
+          },
+    isFirstInboundMessage,
+  })
+  flowConsumed = flowResult.consumed
 
-  const isProdAction = isProductAction(interactiveReplyId, contentText, inboundText)
-
-  if (isProdAction && !existingActiveFlowRun) {
-    // Tapping an external product action outside any flow cancels older stale runs
-    await supabaseAdmin()
-      .from('flow_runs')
-      .update({
-        status: 'cancelled',
-        end_reason: 'product_action_override',
-        ended_at: new Date().toISOString(),
-      })
-      .eq('account_id', accountId)
-      .eq('contact_id', contactRecord.id)
-      .eq('status', 'active')
-  }
-
-  // Check if contact is in an active order session
-  const { data: activeOrderSession } = await supabaseAdmin()
-    .from('order_sessions')
-    .select('state')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactRecord.id)
-    .maybeSingle()
-
-  const inActiveOrderCheckout =
-    activeOrderSession?.state &&
-    activeOrderSession.state !== 'IDLE' &&
-    activeOrderSession.state !== 'AWAITING_PRODUCT' &&
-    activeOrderSession.state !== 'COMPLETED'
-
+  // 2. Only if the Flow did NOT consume this message, offer to standalone commerce bot
+  // (e.g. for automatic payment detection / UTR, order tracking queries)
   let commerceConsumed = false
-  // Only route to standalone commerce bot if customer is NOT inside an active interactive Flow
-  if (!existingActiveFlowRun && (isProdAction || inActiveOrderCheckout)) {
+  if (!flowConsumed) {
     try {
       const commerceRes = await processCommerceInboundMessage({
         accountId,
@@ -859,51 +845,6 @@ async function processMessage(
       commerceConsumed = commerceRes.handled
     } catch (commerceErr) {
       console.warn('[Webhook] Commerce bot error:', commerceErr)
-    }
-  }
-
-  // 2. Dispatch to Flows engine only if not handled by product actions
-  let flowConsumed = false
-  if (!commerceConsumed) {
-    const flowResult = await dispatchInboundToFlows({
-      accountId,
-      userId: configOwnerUserId,
-      contactId: contactRecord.id,
-      conversationId: conversation.id,
-      message:
-        interactiveReplyId
-          ? {
-              kind: 'interactive_reply',
-              reply_id: interactiveReplyId,
-              reply_title: contentText ?? '',
-              meta_message_id: message.id,
-            }
-          : {
-              kind: 'text',
-              text: inboundText,
-              meta_message_id: message.id,
-            },
-      isFirstInboundMessage,
-    })
-    flowConsumed = flowResult.consumed
-
-    // If flow didn't consume it either, run commerce bot general intent check
-    if (!flowConsumed) {
-      try {
-        const commerceRes = await processCommerceInboundMessage({
-          accountId,
-          contactId: contactRecord.id,
-          conversationId: conversation.id,
-          messageText: inboundText,
-          interactiveReplyId,
-          interactiveReplyTitle: contentText,
-          customerName: contactRecord.name,
-          customerPhone: contactRecord.phone,
-        })
-        commerceConsumed = commerceRes.handled
-      } catch (commerceErr) {
-        console.warn('[Webhook] Commerce bot error:', commerceErr)
-      }
     }
   }
 

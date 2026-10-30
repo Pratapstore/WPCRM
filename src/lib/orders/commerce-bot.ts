@@ -581,6 +581,20 @@ Thank you for choosing *Pratap Store*! ❤️`;
   // Case A: Customer is in IDLE state
   // -------------------------------------------------------------
   if (currentState === 'IDLE') {
+    // If account has active interactive flows designed in the Flow Builder,
+    // flows take complete precedence for greetings, menus, and shopping workflows!
+    // Standalone commerce bot only handles explicit payments (UTR, paid) or tracking queries.
+    const { data: activeFlows } = await db
+      .from('flows')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('status', 'active')
+      .limit(1);
+
+    if (activeFlows && activeFlows.length > 0) {
+      return { handled: false, replySent: false };
+    }
+
     const isTrigger =
       COMMERCE_TRIGGERS.some((kw) => lowerText.includes(kw)) ||
       lowerText === 'hi' ||
