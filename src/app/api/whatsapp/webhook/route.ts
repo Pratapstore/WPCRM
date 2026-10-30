@@ -839,6 +839,7 @@ async function processMessage(
   const inActiveOrderCheckout =
     activeOrderSession?.state &&
     activeOrderSession.state !== 'IDLE' &&
+    activeOrderSession.state !== 'AWAITING_PRODUCT' &&
     activeOrderSession.state !== 'COMPLETED'
 
   let commerceConsumed = false

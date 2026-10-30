@@ -741,14 +741,31 @@ Thank you for choosing *Pratap Store*! ❤️`;
     }
 
     if (!matchedProduct) {
-      // Prompt user again
-      await sendMessageToConversation(db, accountId, {
-        conversationId,
-        messageType: 'text',
-        contentText:
-          "⚠️ Please select a product by replying with its Number (e.g. *1*, *2*) or Product Name.\n\nType *MENU* to view the catalog again.",
+      // If user typed menu, hi, hello, main, or tapped a non-product option, release the session back to IDLE
+      // so interactive flows or general menu can take over seamlessly!
+      const isEscapeKeyword = [
+        'hi', 'hello', 'hey', 'menu', 'main', 'main menu', 'start', 'start menu',
+        'order', 'order now', 'catalog', 'help', 'support', 'cancel', 'reset'
+      ].some(k => lowerText.includes(k)) || Boolean(interactiveReplyId);
+
+      // Reset session to IDLE so customer is never trapped in a loop
+      await db.from('order_sessions').upsert({
+        account_id: accountId,
+        contact_id: contactId,
+        conversation_id: conversationId,
+        state: 'IDLE',
+        selected_product: {},
+        quantity: 1,
+        shipping_address: null,
       });
-      return { handled: true, replySent: true };
+
+      // If it was an escape keyword, return handled: false so Flows engine handles it!
+      if (isEscapeKeyword) {
+        return { handled: false, replySent: false };
+      }
+
+      // If it's a completely unrecognized message, return handled: false so flows or AI can handle
+      return { handled: false, replySent: false };
     }
 
     // Product found! Ask for quantity
