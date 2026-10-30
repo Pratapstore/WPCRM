@@ -315,12 +315,22 @@ export function matchesKeywordTrigger(
 ): boolean {
   if (!text || !cfg.keywords?.length) return false;
   const matchType = cfg.match_type ?? "contains";
-  const haystack = cfg.case_sensitive ? text : text.toLowerCase();
+  const haystack = cfg.case_sensitive ? text.trim() : text.trim().toLowerCase();
   for (const raw of cfg.keywords) {
     if (!raw) continue;
-    const needle = cfg.case_sensitive ? raw : raw.toLowerCase();
-    if (matchType === "exact" ? haystack === needle : haystack.includes(needle)) {
-      return true;
+    const needle = cfg.case_sensitive ? raw.trim() : raw.trim().toLowerCase();
+    if (!needle) continue;
+    if (matchType === "exact") {
+      if (haystack === needle) return true;
+    } else {
+      // For short keywords (<= 3 chars, e.g. "hi"), match whole word boundaries so words like "this" or "shirt" don't falsely match
+      if (needle.length <= 3) {
+        const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const wordRegex = new RegExp("(^|[\\s.,!?;:'\"()\\-])" + escaped + "($|[\\s.,!?;:'\"()\\-])", "i");
+        if (wordRegex.test(haystack)) return true;
+      } else {
+        if (haystack.includes(needle)) return true;
+      }
     }
   }
   return false;
@@ -601,17 +611,12 @@ async function findEntryFlow(
   for (const flow of typed) {
     if (flow.trigger_type === "keyword") {
       const cfg = flow.trigger_config as KeywordTriggerConfig;
-      const rawKeywords =
+      // Strictly use ONLY author-configured keywords from flow.trigger_config.
+      // Never force-inject hardcoded default keywords so author edits/deletions take 100% immediate effect!
+      const keywords =
         Array.isArray(cfg?.keywords) && cfg.keywords.length > 0
           ? cfg.keywords
           : [flow.name.toLowerCase().trim()];
-      const isMainFlow = flow.name.toLowerCase().includes("main");
-      const defaultMainKeywords = [
-        "hi", "hello", "hey", "namaste", "namaskar", "menu", "main menu", "mainmenu", "main", "start", "start menu", "order", "order now", "catalog", "products", "shop", "pratap"
-      ];
-      const keywords = isMainFlow
-        ? Array.from(new Set([...rawKeywords, ...defaultMainKeywords]))
-        : rawKeywords;
       if (
         candidates.some((text) =>
           matchesKeywordTrigger(text, { ...cfg, keywords }),
@@ -1436,33 +1441,20 @@ async function handleReplyForActiveRun(
 
   const rawInboundText = (message.kind === "text" ? message.text : message.reply_title || "").toLowerCase().trim();
 
-  // A. Global Menu Navigation ("menu", "main menu", "start", "restart", "home", "cancel"):
-  // If customer at ANY stage wants to go back to the main menu, return directly to the flow's entry node!
-  const isGlobalMenuCommand = [
+  // Check if inbound message matches any of this flow's OWN configured keywords
+  const flowTriggerCfg = (flow.trigger_config || {}) as KeywordTriggerConfig;
+  const matchesFlowTrigger = Array.isArray(flowTriggerCfg.keywords) && flowTriggerCfg.keywords.length > 0
+    ? matchesKeywordTrigger(rawInboundText, flowTriggerCfg)
+    : false;
+
+  const isMenuOrReset = [
     "menu", "main menu", "mainmenu", "start menu", "home", "restart", "reset", "cancel"
   ].includes(rawInboundText);
 
-  if (isGlobalMenuCommand && flow.entry_node_id && nodes.has(flow.entry_node_id)) {
+  if ((matchesFlowTrigger || isMenuOrReset) && flow.entry_node_id && nodes.has(flow.entry_node_id)) {
     run.reprompt_count = 0;
     const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id, nodes);
     return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
-  }
-
-  // B. Friendly Greeting at Entry/Main Node ("hi", "hello", "hey", "namaste"):
-  // If customer greets the bot while on the main menu, re-send the menu without counting fallback strikes!
-  const isGreeting = ["hi", "hello", "hey", "namaste", "namaskar"].includes(rawInboundText);
-  if (isGreeting && (currentNode.node_key === flow.entry_node_id || currentNode.node_key.includes("main"))) {
-    run.reprompt_count = 0;
-    try {
-      if (currentNode.node_type === "send_list") {
-        await sendListAndSuspend(db, run, currentNode);
-      } else if (currentNode.node_type === "send_buttons") {
-        await sendButtonsAndSuspend(db, run, currentNode);
-      }
-    } catch (e) {
-      console.warn("[engine] error re-sending menu on greeting:", e);
-    }
-    return { consumed: true, flow_run_id: run.id, outcome: "advanced" };
   }
 
   // Two ways a reply can advance:

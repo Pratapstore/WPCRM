@@ -392,6 +392,17 @@ describe("matchesKeywordTrigger", () => {
     expect(matchesKeywordTrigger("support center", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nope", cfg)).toBe(false);
   });
+
+  it("enforces word boundary for short keywords to prevent false substring matches", () => {
+    const cfg = { keywords: ["hi"] };
+    expect(matchesKeywordTrigger("shirt", cfg)).toBe(false);
+    expect(matchesKeywordTrigger("white", cfg)).toBe(false);
+    expect(matchesKeywordTrigger("this is cool", cfg)).toBe(false);
+    expect(matchesKeywordTrigger("hi", cfg)).toBe(true);
+    expect(matchesKeywordTrigger("Hi!", cfg)).toBe(true);
+    expect(matchesKeywordTrigger("hi there", cfg)).toBe(true);
+    expect(matchesKeywordTrigger("say hi to mom", cfg)).toBe(true);
+  });
 });
 
 describe("node classification helpers", () => {
