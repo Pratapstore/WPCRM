@@ -1384,15 +1384,19 @@ export async function dispatchInboundToFlows(
         now,
       });
       if (!closure) {
-        return handleReplyForActiveRun(
+        const replyRes = await handleReplyForActiveRun(
           db,
           activeRun,
           runFlow!,
           input.message,
           nodes,
         );
+        if (replyRes.consumed) {
+          return replyRes;
+        }
+      } else {
+        await closeActiveRun(db, activeRun, closure, now);
       }
-      await closeActiveRun(db, activeRun, closure, now);
     }
 
     // No active run → look for a flow whose entry trigger matches.
@@ -1438,24 +1442,6 @@ async function handleReplyForActiveRun(
   });
 
   const currentNode = nodes.get(run.current_node_key!)!;
-
-  const rawInboundText = (message.kind === "text" ? message.text : message.reply_title || "").toLowerCase().trim();
-
-  // Check if inbound message matches any of this flow's OWN configured keywords
-  const flowTriggerCfg = (flow.trigger_config || {}) as KeywordTriggerConfig;
-  const matchesFlowTrigger = Array.isArray(flowTriggerCfg.keywords) && flowTriggerCfg.keywords.length > 0
-    ? matchesKeywordTrigger(rawInboundText, flowTriggerCfg)
-    : false;
-
-  const isMenuOrReset = [
-    "menu", "main menu", "mainmenu", "start menu", "home", "restart", "reset", "cancel"
-  ].includes(rawInboundText);
-
-  if ((matchesFlowTrigger || isMenuOrReset) && flow.entry_node_id && nodes.has(flow.entry_node_id)) {
-    run.reprompt_count = 0;
-    const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id, nodes);
-    return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
-  }
 
   // Two ways a reply can advance:
   //   1. Interactive button/list tap (or typed title/index) on a send_buttons/send_list node.
@@ -1728,6 +1714,28 @@ Kripya apna sahi poora naam (Full Name) share karein, taaki parcel par aapka sah
       flow_run_id: run.id,
       outcome: outcome.outcome,
     };
+  }
+
+  // Neither interactive choice nor input validation matched.
+  // Check if customer explicitly typed a menu reset or navigation command
+  if (message.kind === "text") {
+    const rawLower = message.text.trim().toLowerCase();
+    const isExplicitMenuCommand = [
+      "menu", "main menu", "mainmenu", "start menu", "home", "restart", "reset", "cancel"
+    ].includes(rawLower);
+
+    if (isExplicitMenuCommand && flow.entry_node_id && nodes.has(flow.entry_node_id)) {
+      run.reprompt_count = 0;
+      const outcome = await advanceFromNodeKey(db, run, flow.entry_node_id, nodes);
+      return { consumed: true, flow_run_id: run.id, outcome: outcome.outcome };
+    }
+
+    // Check if customer typed a keyword for a DIFFERENT active flow (seamless flow switching)
+    const otherFlow = await findEntryFlow(db, run.account_id, message, false);
+    if (otherFlow && otherFlow.id !== flow.id) {
+      await endRun(db, run.id, "cancelled", "switched_to_another_flow");
+      return { consumed: false, flow_run_id: run.id, outcome: "no_match" };
+    }
   }
 
   // No match → fallback. Apply the policy.

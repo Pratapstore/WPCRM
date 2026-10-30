@@ -218,4 +218,25 @@ describe("dispatchInboundToFlows run integrity", () => {
     expect(result).toMatchObject({ consumed: true, outcome: "completed" });
     expect(h.sendText).toHaveBeenCalledTimes(1);
   });
+
+  it("advances active run on button/list tap even when option title matches flow trigger keywords", async () => {
+    setup("active");
+    // Modify flow to include keywords that match the option title
+    h.tables.flows[0].trigger_config = { keywords: ["products", "order"] };
+    h.tables.flow_nodes[0].config = {
+      text: "Pick one",
+      buttons: [{ reply_id: "prod_btn", title: "View Products", next_node_key: "thanks" }],
+    };
+
+    const result = await dispatch({
+      kind: "interactive_reply",
+      reply_id: "prod_btn",
+      reply_title: "View Products",
+      meta_message_id: "m-prod-1",
+    });
+
+    expect(result).toMatchObject({ consumed: true, outcome: "completed" });
+    expect(run("run-1")).toMatchObject({ status: "completed", current_node_key: "thanks" });
+    expect(h.sendText).toHaveBeenCalledTimes(1);
+  });
 });
