@@ -22,13 +22,22 @@ import {
   Italic,
   Strikethrough,
   Code,
-  List,
+  List as ListIcon,
   Search,
   Filter,
   Check,
   X,
   Clock,
   Sparkles,
+  Image as ImageIcon,
+  FileText,
+  Film,
+  Layers,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Paperclip,
+  Menu,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +61,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { WhatsAppQrLinker } from '@/components/settings/whatsapp-qr-linker';
+import { uploadAccountMedia } from '@/lib/storage/upload-media';
 
 interface RecipientRow {
   id: string;
@@ -60,37 +70,128 @@ interface RecipientRow {
   var1: string;
 }
 
+interface ButtonItem {
+  id: string;
+  title: string;
+}
+
+interface ListRowItem {
+  id: string;
+  title: string;
+  description: string;
+}
+
+interface ListSectionItem {
+  title: string;
+  rows: ListRowItem[];
+}
+
 const PRESET_TEMPLATES = [
   {
-    id: 'custom',
-    name: 'New Message (Custom)',
+    id: 'custom_text',
+    name: 'New Message (Custom Text)',
+    type: 'text' as const,
     text: 'Hello {{Name}}! 🙏\n\nWelcome to *Pratap Store*.\nWe have exciting custom products personalized with your name and photos.\n\nReply *MENU* to browse our catalog or place an order!\n\nWebsite: www.pratapstore.in',
+    header: '',
+    footer: '',
+    buttons: [],
+    listLabel: 'View Menu',
+    listSections: [],
   },
   {
-    id: 'diwali_offer',
-    name: 'Special Discount Offer 🔥',
-    text: 'Hello {{Name}}! ✨\n\n*Special Offer: Exclusive flat discount for you! 🔥*\n\nApne favourite products (Custom T-Shirts, Photo Mugs, Keychains & Cushions) par paayein up to *80% OFF*!\n\n🏷️ Use Code: *PRATAP100*\n\nReply *ORDER* to browse or shop now!\nPratap Store — Your Ideas, Our Prints!',
+    id: 'interactive_buttons_offer',
+    name: 'Special Offer (With 3 Quick Buttons) 🔥',
+    type: 'buttons' as const,
+    header: 'Pratap Store Special Offer 🔥',
+    text: 'Hello {{Name}}! ✨\n\nExclusive flat discount for you! Apne favourite customized products (T-Shirts, Mugs, Keychains) par paayein up to *80% OFF*!\n\n🏷️ Coupon Code: *PRATAP100*\n\nTap a quick button below to start:',
+    footer: 'Pratap Store • Fast Pan-India Delivery',
+    buttons: [
+      { id: 'view_catalog', title: 'Browse Catalog 🛍️' },
+      { id: 'view_offers', title: 'Special Offers 🔥' },
+      { id: 'contact_agent', title: 'Talk to Agent 📞' },
+    ],
+    listLabel: 'View Menu',
+    listSections: [],
+  },
+  {
+    id: 'interactive_list_catalog',
+    name: 'Product Catalog (Interactive List Menu) 📋',
+    type: 'list' as const,
+    header: 'Pratap Store Catalog 📦',
+    text: 'Hello {{Name}}! Welcome to *Pratap Store*.\n\nWe provide premium personalized and customized printing with fast doorstep shipping.\n\n👇 Click the menu button below to select a category:',
+    footer: 'Select an option to view details & pricing',
+    buttons: [],
+    listLabel: 'Select Category',
+    listSections: [
+      {
+        title: 'Apparel & Wearables',
+        rows: [
+          { id: 'cat_tshirts', title: 'Custom T-Shirts', description: '100% Premium Cotton with Photo/Text print' },
+          { id: 'cat_hoodies', title: 'Printed Hoodies', description: 'Warm fleece with custom embroidery or print' },
+        ],
+      },
+      {
+        title: 'Personalized Gifts',
+        rows: [
+          { id: 'cat_mugs', title: 'Magic Photo Mugs', description: 'Color changes with hot beverage reveal' },
+          { id: 'cat_keychains', title: 'Photo Keychains', description: 'Laser engraved acrylic & metal keychains' },
+          { id: 'cat_cushions', title: 'Velvet Cushions', description: 'Soft fluffy personalized photo cushions' },
+        ],
+      },
+    ],
   },
   {
     id: 'welcome_greeting',
     name: 'Welcome Greeting 🙏',
+    type: 'text' as const,
     text: 'Namaste {{Name}}! 🙏\n\nThank you for connecting with *Pratap Store*.\nWe specialize in high quality customized printing:\n▪️ Personalized Photo Keychains\n▪️ Custom Printed T-Shirts\n▪️ Magic Photo Mugs\n▪️ Personalized Frames\n\nHow can we help you today? Reply with your requirement!',
-  },
-  {
-    id: 'order_status_reminder',
-    name: 'Order / Catalog Reminder 🛍️',
-    text: 'Hi {{Name}}, your custom order details are ready!\n\nCheck out our latest catalog and best-selling customized prints.\nFast Pan-India shipping with instant tracking.\n\nReply *MENU* anytime to get started.',
+    header: '',
+    footer: '',
+    buttons: [],
+    listLabel: 'View Menu',
+    listSections: [],
   },
 ];
 
 export default function SendMessagePage() {
   // Campaign State
   const [campaignName, setCampaignName] = useState(`Campaign ${new Date().toLocaleDateString('en-IN')}`);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('custom');
+  const [selectedTemplateId, setSelectedTemplateId] = useState('custom_text');
   const [selectedInstance, setSelectedInstance] = useState('auto');
-  const [messageType, setMessageType] = useState<'text' | 'media'>('text');
+  const [messageType, setMessageType] = useState<'text' | 'media' | 'buttons' | 'list'>('text');
+  
+  // Media State
   const [mediaUrl, setMediaUrl] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploadedFileSize, setUploadedFileSize] = useState<string>('');
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [showManualMediaUrl, setShowManualMediaUrl] = useState(false);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Message Content State
+  const [headerText, setHeaderText] = useState('');
   const [messageText, setMessageText] = useState(PRESET_TEMPLATES[0].text);
+  const [footerText, setFooterText] = useState('');
+
+  // Buttons State (1-3 buttons)
+  const [buttons, setButtons] = useState<ButtonItem[]>([
+    { id: 'btn_catalog', title: 'Browse Catalog 🛍️' },
+    { id: 'btn_offers', title: 'Special Offers 🔥' },
+    { id: 'btn_agent', title: 'Talk to Agent 📞' },
+  ]);
+
+  // List Menu State
+  const [listButtonLabel, setListButtonLabel] = useState('View Menu');
+  const [listSections, setListSections] = useState<ListSectionItem[]>([
+    {
+      title: 'Our Top Categories',
+      rows: [
+        { id: 'row_1', title: 'Custom T-Shirts', description: '100% Cotton, Personalized Prints' },
+        { id: 'row_2', title: 'Magic Photo Mugs', description: 'Color changing with hot drinks' },
+        { id: 'row_3', title: 'Photo Keychains', description: 'Laser engraved acrylic & metal' },
+      ],
+    },
+  ]);
 
   // Phone Numbers State
   const [recipients, setRecipients] = useState<RecipientRow[]>([
@@ -127,7 +228,7 @@ export default function SendMessagePage() {
   const [sendLogs, setSendLogs] = useState<Array<{ phone: string; name?: string; status: 'sent' | 'failed'; error?: string }>>([]);
   const [showProgressModal, setShowProgressModal] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Fetch Baileys instances
@@ -167,8 +268,52 @@ export default function SendMessagePage() {
     setSelectedTemplateId(id);
     const tpl = PRESET_TEMPLATES.find((t) => t.id === id);
     if (tpl) {
+      setMessageType(tpl.type);
       setMessageText(tpl.text);
+      setHeaderText(tpl.header || '');
+      setFooterText(tpl.footer || '');
+      if (tpl.buttons && tpl.buttons.length > 0) {
+        setButtons(tpl.buttons);
+      }
+      if (tpl.listSections && tpl.listSections.length > 0) {
+        setListSections(tpl.listSections);
+      }
+      if (tpl.listLabel) {
+        setListButtonLabel(tpl.listLabel);
+      }
     }
+  }
+
+  // Media file upload handler
+  async function handleMediaUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 16 * 1024 * 1024) {
+      toast.error('File size exceeds 16 MB limit');
+      return;
+    }
+
+    setIsUploadingMedia(true);
+    const sizeStr = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file);
+      setMediaUrl(publicUrl);
+      setUploadedFileName(file.name);
+      setUploadedFileSize(sizeStr);
+      toast.success(`Media "${file.name}" uploaded successfully!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to upload media');
+    } finally {
+      setIsUploadingMedia(false);
+      if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
+    }
+  }
+
+  function handleRemoveMedia() {
+    setMediaUrl('');
+    setUploadedFileName('');
+    setUploadedFileSize('');
   }
 
   // Formatting tool helpers
@@ -198,6 +343,78 @@ export default function SendMessagePage() {
       el.focus();
       el.setSelectionRange(start + tag.length, start + tag.length);
     }, 50);
+  }
+
+  // Button operations
+  function handleAddButton() {
+    if (buttons.length >= 3) {
+      toast.error('WhatsApp limits interactive buttons to a maximum of 3');
+      return;
+    }
+    const nextIdx = buttons.length + 1;
+    setButtons([...buttons, { id: `btn_${Date.now()}`, title: `Option ${nextIdx}` }]);
+  }
+
+  function handleUpdateButton(index: number, field: keyof ButtonItem, val: string) {
+    const updated = [...buttons];
+    updated[index] = { ...updated[index], [field]: val };
+    setButtons(updated);
+  }
+
+  function handleDeleteButton(index: number) {
+    if (buttons.length <= 1) {
+      toast.error('Button messages require at least 1 button');
+      return;
+    }
+    setButtons(buttons.filter((_, i) => i !== index));
+  }
+
+  // List operations
+  const totalListRows = listSections.reduce((sum, s) => sum + s.rows.length, 0);
+
+  function handleAddListRow(sectionIndex: number) {
+    if (totalListRows >= 10) {
+      toast.error('WhatsApp limits interactive lists to a maximum of 10 total items');
+      return;
+    }
+    const updated = [...listSections];
+    const nextIdx = updated[sectionIndex].rows.length + 1;
+    updated[sectionIndex].rows.push({
+      id: `row_${Date.now()}`,
+      title: `Item ${nextIdx}`,
+      description: 'Short description',
+    });
+    setListSections(updated);
+  }
+
+  function handleUpdateListRow(
+    sectionIndex: number,
+    rowIndex: number,
+    field: keyof ListRowItem,
+    val: string
+  ) {
+    const updated = [...listSections];
+    updated[sectionIndex].rows[rowIndex] = {
+      ...updated[sectionIndex].rows[rowIndex],
+      [field]: val,
+    };
+    setListSections(updated);
+  }
+
+  function handleDeleteListRow(sectionIndex: number, rowIndex: number) {
+    if (totalListRows <= 1) {
+      toast.error('List menu requires at least 1 row');
+      return;
+    }
+    const updated = [...listSections];
+    updated[sectionIndex].rows = updated[sectionIndex].rows.filter((_, i) => i !== rowIndex);
+    setListSections(updated);
+  }
+
+  function handleUpdateSectionTitle(sectionIndex: number, title: string) {
+    const updated = [...listSections];
+    updated[sectionIndex].title = title;
+    setListSections(updated);
   }
 
   // Phone Numbers Operations
@@ -319,7 +536,7 @@ export default function SendMessagePage() {
   }
 
   // CSV Import
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -332,7 +549,6 @@ export default function SendMessagePage() {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        // Skip header if first line has 'phone' or 'number'
         if (i === 0 && (line.toLowerCase().includes('phone') || line.toLowerCase().includes('number'))) {
           continue;
         }
@@ -355,7 +571,7 @@ export default function SendMessagePage() {
       toast.success(`Imported ${newItems.length} contacts from CSV!`);
     };
     reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (csvFileInputRef.current) csvFileInputRef.current.value = '';
   }
 
   // Download Sample CSV
@@ -382,8 +598,40 @@ export default function SendMessagePage() {
       return;
     }
     if (!messageText.trim() && !mediaUrl.trim()) {
-      toast.error('Please compose a message or add a media URL');
+      toast.error('Please compose a message or upload media');
       return;
+    }
+
+    if (messageType === 'buttons') {
+      if (buttons.length === 0) {
+        toast.error('Please add at least 1 button for Button messages');
+        return;
+      }
+      for (const b of buttons) {
+        if (!b.title.trim()) {
+          toast.error('Each button must have a title');
+          return;
+        }
+        if (b.title.length > 20) {
+          toast.error(`Button title "${b.title}" exceeds WhatsApp 20 character limit`);
+          return;
+        }
+      }
+    }
+
+    if (messageType === 'list') {
+      if (!listButtonLabel.trim()) {
+        toast.error('Please enter a Menu Button Label (e.g. "Select Option")');
+        return;
+      }
+      if (totalListRows === 0) {
+        toast.error('Please add at least 1 item row in the list menu');
+        return;
+      }
+      if (totalListRows > 10) {
+        toast.error('WhatsApp limits interactive lists to 10 total items');
+        return;
+      }
     }
 
     setIsSending(true);
@@ -401,6 +649,16 @@ export default function SendMessagePage() {
           messageType,
           messageText,
           mediaUrl: mediaUrl || undefined,
+          headerText: headerText || undefined,
+          footerText: footerText || undefined,
+          buttons: messageType === 'buttons' ? buttons : undefined,
+          listConfig:
+            messageType === 'list'
+              ? {
+                  buttonLabel: listButtonLabel,
+                  sections: listSections,
+                }
+              : undefined,
           recipients: recipients.map((r) => ({
             phone: r.number,
             name: r.name,
@@ -451,13 +709,20 @@ export default function SendMessagePage() {
   const invalidCount = recipients.length - validCount;
 
   return (
-    <div className="flex-1 space-y-6 p-6 max-w-7xl mx-auto pb-28">
-      {/* Hidden file input */}
+    <div className="flex-1 space-y-6 p-6 max-w-7xl mx-auto pb-32">
+      {/* Hidden file inputs */}
       <input
         type="file"
-        ref={fileInputRef}
-        onChange={handleFileUpload}
+        ref={csvFileInputRef}
+        onChange={handleCsvUpload}
         accept=".csv,.txt,.xlsx"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={mediaFileInputRef}
+        onChange={handleMediaUpload}
+        accept="image/*,application/pdf,video/*"
         className="hidden"
       />
 
@@ -472,11 +737,11 @@ export default function SendMessagePage() {
               <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
                 Send Message
                 <Badge variant="outline" className="text-xs font-normal border-primary/30 text-primary bg-primary/5">
-                  Campaign Sender
+                  Campaign &amp; Interactive Sender
                 </Badge>
               </h1>
               <p className="text-sm text-muted-foreground">
-                Build a campaign, check it, then send it instantly to new or existing customers.
+                Broadcast personalized text, buttons, list menus, and uploaded media directly to customers.
               </p>
             </div>
           </div>
@@ -514,10 +779,10 @@ export default function SendMessagePage() {
         <CardHeader className="py-4 border-b border-border/40">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-muted text-muted-foreground text-xs font-semibold">1</span>
-            <CardTitle className="text-base font-semibold">Campaign</CardTitle>
+            <CardTitle className="text-base font-semibold">Campaign &amp; Message Type</CardTitle>
           </div>
           <CardDescription className="text-xs">
-            Name the run, pick who sends it and what shape it is.
+            Name the campaign, choose sending channel, and select message format (Text, Media, Buttons, or List Menu).
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -553,18 +818,18 @@ export default function SendMessagePage() {
 
           <div>
             <label className="text-xs font-medium text-foreground mb-1.5 block">
-              <span className="text-destructive">*</span> Sending Instance
+              <span className="text-destructive">*</span> Sending Channel
             </label>
             <Select value={selectedInstance} onValueChange={(val) => val && setSelectedInstance(val)}>
               <SelectTrigger className="bg-background/50 h-9">
-                <SelectValue placeholder="Select instance" />
+                <SelectValue placeholder="Select channel" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto">Auto (Linked Device / High Speed)</SelectItem>
                 <SelectItem value="baileys">
                   {isBaileysConnected ? `Linked WhatsApp (${linkedPhoneNumber})` : 'Linked WhatsApp Web (QR)'}
                 </SelectItem>
-                <SelectItem value="meta">Meta Cloud API (Approved Templates)</SelectItem>
+                <SelectItem value="meta">Meta Cloud API (Official Cloud)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -573,32 +838,184 @@ export default function SendMessagePage() {
             <label className="text-xs font-medium text-foreground mb-1.5 block">
               <span className="text-destructive">*</span> Message Type
             </label>
-            <Select value={messageType} onValueChange={(val) => val && setMessageType(val as 'text' | 'media')}>
-              <SelectTrigger className="bg-background/50 h-9">
+            <Select
+              value={messageType}
+              onValueChange={(val) => val && setMessageType(val as 'text' | 'media' | 'buttons' | 'list')}
+            >
+              <SelectTrigger className="bg-background/50 h-9 font-medium">
                 <SelectValue placeholder="Message type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="text">Text Message</SelectItem>
-                <SelectItem value="media">Image / Media with Caption</SelectItem>
+                <SelectItem value="text">📝 Text Message</SelectItem>
+                <SelectItem value="media">🖼️ Media (Image / Banner / PDF)</SelectItem>
+                <SelectItem value="buttons">🔘 Interactive Buttons (1–3 Quick Replies)</SelectItem>
+                <SelectItem value="list">📋 Interactive List Menu (Expandable Menu)</SelectItem>
               </SelectContent>
             </Select>
           </div>
-
-          {messageType === 'media' && (
-            <div className="md:col-span-4 mt-1">
-              <label className="text-xs font-medium text-foreground mb-1.5 block">
-                Media URL (Image / Banner / PDF)
-              </label>
-              <Input
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                placeholder="https://example.com/banner.jpg"
-                className="bg-background/50 h-9"
-              />
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      {/* Manual Upload Media Box (Available for 'media', 'buttons', and 'text') */}
+      {(messageType === 'media' || messageType === 'buttons' || mediaUrl) && (
+        <Card className="border-border/50 bg-card/60 backdrop-blur-sm shadow-sm border-l-4 border-l-primary">
+          <CardHeader className="py-3 border-b border-border/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-primary" />
+                <CardTitle className="text-sm font-semibold">
+                  Media Attachment (Image / Banner / PDF / Video)
+                </CardTitle>
+                {messageType === 'buttons' && (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    Optional Header Banner
+                  </Badge>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowManualMediaUrl(!showManualMediaUrl)}
+                className="text-xs h-7 text-muted-foreground hover:text-foreground"
+              >
+                {showManualMediaUrl ? 'Switch to File Upload' : 'Or paste URL directly'}
+              </Button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="pt-4">
+            {!showManualMediaUrl ? (
+              <div className="space-y-3">
+                {mediaUrl ? (
+                  /* Uploaded File Preview Card */
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      {mediaUrl.toLowerCase().includes('.pdf') ? (
+                        <div className="w-14 h-14 rounded-lg bg-red-500/10 border border-red-500/20 flex flex-col items-center justify-center text-red-400">
+                          <FileText className="w-7 h-7" />
+                          <span className="text-[9px] font-bold uppercase mt-0.5">PDF</span>
+                        </div>
+                      ) : mediaUrl.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
+                        <div className="w-14 h-14 rounded-lg bg-blue-500/10 border border-blue-500/20 flex flex-col items-center justify-center text-blue-400">
+                          <Film className="w-7 h-7" />
+                          <span className="text-[9px] font-bold uppercase mt-0.5">VIDEO</span>
+                        </div>
+                      ) : (
+                        <div className="w-14 h-14 rounded-lg overflow-hidden border border-border/60 bg-black/40 flex-shrink-0">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={mediaUrl}
+                            alt="Media Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-xs text-foreground truncate max-w-xs">
+                            {uploadedFileName || mediaUrl.split('/').pop()?.split('?')[0] || 'Uploaded Media'}
+                          </span>
+                          <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] py-0">
+                            Uploaded &amp; Ready
+                          </Badge>
+                        </div>
+                        {uploadedFileSize && (
+                          <div className="text-[11px] text-muted-foreground mt-0.5">
+                            Size: {uploadedFileSize}
+                          </div>
+                        )}
+                        <a
+                          href={mediaUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-primary hover:underline flex items-center gap-1 mt-0.5"
+                        >
+                          View full media <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => mediaFileInputRef.current?.click()}
+                        disabled={isUploadingMedia}
+                        className="h-8 text-xs gap-1.5"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Change File
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleRemoveMedia}
+                        className="h-8 text-xs text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Drag and Drop / Upload Button */
+                  <div
+                    onClick={() => mediaFileInputRef.current?.click()}
+                    className="border-2 border-dashed border-border/60 hover:border-primary/50 bg-background/30 hover:bg-muted/30 transition-all rounded-xl p-6 text-center cursor-pointer group"
+                  >
+                    <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center text-primary mb-3 transition-colors">
+                      {isUploadingMedia ? (
+                        <RefreshCw className="w-6 h-6 animate-spin" />
+                      ) : (
+                        <Upload className="w-6 h-6" />
+                      )}
+                    </div>
+                    <div className="font-medium text-xs text-foreground mb-1">
+                      {isUploadingMedia ? (
+                        <span>Uploading media to secure CRM storage...</span>
+                      ) : (
+                        <span>Click to upload Image, Banner, PDF, or Video from device</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                      Supports PNG, JPG, WEBP, GIF, PDF documents &amp; MP4 videos up to 16 MB.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Direct URL Input */
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-foreground block">
+                  Media Direct Public URL (Image / Banner / PDF / Video)
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    value={mediaUrl}
+                    onChange={(e) => setMediaUrl(e.target.value)}
+                    placeholder="https://yourstore.com/banner.jpg"
+                    className="bg-background/50 h-9 font-mono text-xs flex-1"
+                  />
+                  {mediaUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveMedia}
+                      className="h-9 text-destructive hover:bg-destructive/10"
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Section 2: Phone Numbers & Audience */}
       <Card className="border-border/50 bg-card/60 backdrop-blur-sm shadow-sm">
@@ -613,7 +1030,7 @@ export default function SendMessagePage() {
                 </Badge>
               </div>
               <CardDescription className="text-xs mt-0.5">
-                Import a list, or add rows by hand. Supports dynamic variables.
+                Import a list, or add rows by hand. Supports dynamic personalization variables.
               </CardDescription>
             </div>
 
@@ -622,7 +1039,7 @@ export default function SendMessagePage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => csvFileInputRef.current?.click()}
                 className="h-8 gap-1.5 text-xs bg-background/50"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -677,7 +1094,7 @@ export default function SendMessagePage() {
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search name, number or var..."
+                  placeholder="Search name, number or variable..."
                   className="h-8 pl-8 text-xs bg-background/60"
                 />
               </div>
@@ -734,7 +1151,7 @@ export default function SendMessagePage() {
 
           {/* Numbers Table */}
           <div className="border border-border/40 rounded-lg overflow-hidden bg-background/40">
-            <div className="max-h-[320px] overflow-y-auto">
+            <div className="max-h-[280px] overflow-y-auto">
               <table className="w-full text-xs text-left">
                 <thead className="bg-muted/40 text-muted-foreground uppercase tracking-wider font-semibold sticky top-0 backdrop-blur-md border-b border-border/40">
                   <tr>
@@ -814,14 +1231,43 @@ export default function SendMessagePage() {
         <CardHeader className="py-4 border-b border-border/40">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-muted text-muted-foreground text-xs font-semibold">3</span>
-            <CardTitle className="text-base font-semibold">Message</CardTitle>
+            <CardTitle className="text-base font-semibold">
+              {messageType === 'buttons'
+                ? 'Interactive Button Message Builder'
+                : messageType === 'list'
+                ? 'Interactive List Menu Builder'
+                : 'Message Content'}
+            </CardTitle>
           </div>
           <CardDescription className="text-xs">
-            Insert contact fields with &quot;Use Column&quot; to personalise each send. Format with bold, italic, emoji.
+            {messageType === 'buttons'
+              ? 'Configure WhatsApp Quick Reply buttons (up to 3 buttons) that recipients can tap with 1 click.'
+              : messageType === 'list'
+              ? 'Configure a tap-to-expand list menu (up to 10 rows) with section headings and row descriptions.'
+              : 'Insert contact columns ({{Name}}, {{Number}}) to personalize each send.'}
           </CardDescription>
         </CardHeader>
 
-        <CardContent className="pt-4 space-y-3">
+        <CardContent className="pt-4 space-y-4">
+          {/* Header Text (for Buttons or List) */}
+          {(messageType === 'buttons' || messageType === 'list') && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-foreground">
+                  Header Title <span className="text-muted-foreground font-normal">(Optional, max 60 chars)</span>
+                </label>
+                <span className="text-[11px] text-muted-foreground">{headerText.length}/60</span>
+              </div>
+              <Input
+                value={headerText}
+                maxLength={60}
+                onChange={(e) => setHeaderText(e.target.value)}
+                placeholder="e.g. Pratap Store Specials 🔥"
+                className="bg-background/50 h-9 text-xs"
+              />
+            </div>
+          )}
+
           {/* Formatting & Insert Toolbar */}
           <div className="flex flex-wrap items-center gap-1.5 p-2 bg-muted/30 rounded-lg border border-border/40">
             {/* Variable Tag Inserters */}
@@ -898,7 +1344,7 @@ export default function SendMessagePage() {
                 className="h-7 w-7 text-xs"
                 title="Bullet point"
               >
-                <List className="w-3.5 h-3.5" />
+                <ListIcon className="w-3.5 h-3.5" />
               </Button>
             </div>
 
@@ -919,18 +1365,219 @@ export default function SendMessagePage() {
 
           {/* Message Textarea */}
           <div className="relative">
+            <label className="text-xs font-medium text-foreground mb-1 block">
+              <span className="text-destructive">*</span> Body Text
+            </label>
             <Textarea
               ref={textareaRef}
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
-              placeholder="Type your WhatsApp broadcast message here... Use *bold*, _italic_, or {{Name}} tags."
-              rows={8}
+              placeholder="Type your WhatsApp message here... Format with *bold*, _italic_, or {{Name}} tags."
+              rows={6}
               className="font-sans text-sm bg-background/50 border-border/50 focus:border-primary p-3"
             />
             <div className="absolute right-3 bottom-2.5 text-[11px] text-muted-foreground pointer-events-none">
               {messageText.length} characters
             </div>
           </div>
+
+          {/* Footer Text (for Buttons or List) */}
+          {(messageType === 'buttons' || messageType === 'list') && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-foreground">
+                  Footer Line <span className="text-muted-foreground font-normal">(Optional subtle grey text, max 60 chars)</span>
+                </label>
+                <span className="text-[11px] text-muted-foreground">{footerText.length}/60</span>
+              </div>
+              <Input
+                value={footerText}
+                maxLength={60}
+                onChange={(e) => setFooterText(e.target.value)}
+                placeholder="e.g. Pratap Store • Pan-India Free Delivery"
+                className="bg-background/50 h-9 text-xs"
+              />
+            </div>
+          )}
+
+          {/* BUTTON BUILDER (when messageType === 'buttons') */}
+          {messageType === 'buttons' && (
+            <div className="border border-border/50 rounded-xl p-4 bg-background/40 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <span>Quick Reply Buttons</span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {buttons.length} / 3 Buttons
+                    </Badge>
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Recipients tap a button to reply instantly. Meta standard allows max 20 characters per button title.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAddButton}
+                  disabled={buttons.length >= 3}
+                  className="h-7 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Button
+                </Button>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                {buttons.map((btn, idx) => (
+                  <div
+                    key={btn.id || idx}
+                    className="flex items-center gap-2.5 p-2 rounded-lg bg-card/80 border border-border/40"
+                  >
+                    <span className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1">
+                      <Input
+                        value={btn.title}
+                        maxLength={20}
+                        onChange={(e) => handleUpdateButton(idx, 'title', e.target.value)}
+                        placeholder={`Button ${idx + 1} Title (e.g. Browse Catalog)`}
+                        className="h-8 text-xs bg-background/50"
+                      />
+                    </div>
+                    <span className="text-[11px] text-muted-foreground w-12 text-right">
+                      {btn.title.length}/20
+                    </span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => handleDeleteButton(idx)}
+                      disabled={buttons.length <= 1}
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* LIST BUILDER (when messageType === 'list') */}
+          {messageType === 'list' && (
+            <div className="border border-border/50 rounded-xl p-4 bg-background/40 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <span>Interactive List Menu</span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {totalListRows} / 10 Items
+                    </Badge>
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Displays an expandable popup list menu when customer taps the action button on WhatsApp.
+                  </p>
+                </div>
+              </div>
+
+              {/* Menu Button Label */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-foreground">
+                    <span className="text-destructive">*</span> Menu Button Label{' '}
+                    <span className="text-muted-foreground font-normal">(Text on the WhatsApp trigger button, max 20 chars)</span>
+                  </label>
+                  <span className="text-[11px] text-muted-foreground">{listButtonLabel.length}/20</span>
+                </div>
+                <Input
+                  value={listButtonLabel}
+                  maxLength={20}
+                  onChange={(e) => setListButtonLabel(e.target.value)}
+                  placeholder="e.g. View Catalog or Select Option"
+                  className="bg-background/50 h-9 text-xs"
+                />
+              </div>
+
+              {/* Sections & Rows */}
+              <div className="space-y-4 pt-1">
+                {listSections.map((sec, sIdx) => (
+                  <div
+                    key={sIdx}
+                    className="p-3.5 rounded-xl bg-card/90 border border-border/50 space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 max-w-sm">
+                        <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                          Section {sIdx + 1} Heading (max 24 chars)
+                        </label>
+                        <Input
+                          value={sec.title}
+                          maxLength={24}
+                          onChange={(e) => handleUpdateSectionTitle(sIdx, e.target.value)}
+                          placeholder="e.g. Popular Categories"
+                          className="h-7 text-xs bg-background/50 font-semibold"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleAddListRow(sIdx)}
+                        disabled={totalListRows >= 10}
+                        className="h-7 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10 self-end"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add Item
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {sec.rows.map((row, rIdx) => (
+                        <div
+                          key={row.id || rIdx}
+                          className="flex items-center gap-2 p-2 rounded-lg bg-background/40 border border-border/30"
+                        >
+                          <span className="text-xs text-muted-foreground font-mono w-5 text-center">
+                            {rIdx + 1}.
+                          </span>
+                          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input
+                              value={row.title}
+                              maxLength={24}
+                              onChange={(e) => handleUpdateListRow(sIdx, rIdx, 'title', e.target.value)}
+                              placeholder="Row Title (e.g. Custom T-Shirts, max 24)"
+                              className="h-7 text-xs bg-background/50 font-medium"
+                            />
+                            <Input
+                              value={row.description}
+                              maxLength={72}
+                              onChange={(e) =>
+                                handleUpdateListRow(sIdx, rIdx, 'description', e.target.value)
+                              }
+                              placeholder="Description (optional, max 72)"
+                              className="h-7 text-xs bg-background/50 text-muted-foreground"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleDeleteListRow(sIdx, rIdx)}
+                            disabled={totalListRows <= 1}
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -939,10 +1586,10 @@ export default function SendMessagePage() {
         <CardHeader className="py-4 border-b border-border/40">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-muted text-muted-foreground text-xs font-semibold">4</span>
-            <CardTitle className="text-base font-semibold">Delivery</CardTitle>
+            <CardTitle className="text-base font-semibold">Delivery &amp; Anti-Ban Delay</CardTitle>
           </div>
           <CardDescription className="text-xs">
-            Send as soon as you launch, or pick anti-ban pacing between messages.
+            Send immediately with automatic jitter delay between messages to safeguard your WhatsApp number.
           </CardDescription>
         </CardHeader>
 
@@ -951,7 +1598,7 @@ export default function SendMessagePage() {
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-foreground">Anti-ban Pacing Delay:</label>
               <Select value={delaySeconds.toString()} onValueChange={(val) => val && setDelaySeconds(Number(val))}>
-                <SelectTrigger className="h-8 w-32 bg-background/50 text-xs">
+                <SelectTrigger className="h-8 w-36 bg-background/50 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -991,8 +1638,14 @@ export default function SendMessagePage() {
               </strong>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-muted-foreground">INSTANCES:</span>
-              <strong className="text-foreground font-mono">{isBaileysConnected ? '1 (Active)' : '0 (Offline)'}</strong>
+              <span className="text-muted-foreground">MESSAGE TYPE:</span>
+              <strong className="text-primary uppercase font-mono">{messageType}</strong>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">CHANNEL:</span>
+              <strong className="text-foreground font-mono">
+                {isBaileysConnected ? 'Linked Device' : 'Meta API'}
+              </strong>
             </div>
           </div>
 
@@ -1003,7 +1656,7 @@ export default function SendMessagePage() {
               className="gap-2 h-9 text-xs"
             >
               <Eye className="w-3.5 h-3.5" />
-              Preview Chat
+              Preview WhatsApp Chat
             </Button>
 
             <Button
@@ -1012,7 +1665,7 @@ export default function SendMessagePage() {
               className="gap-2 h-9 text-xs font-semibold px-6 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
             >
               <Send className="w-4 h-4" />
-              {isSending ? 'Sending Campaign...' : 'Send Now'}
+              {isSending ? 'Sending Campaign...' : 'Send Campaign Now'}
             </Button>
           </div>
         </div>
@@ -1024,13 +1677,13 @@ export default function SendMessagePage() {
           <DialogHeader>
             <DialogTitle>Manual Numbers Import</DialogTitle>
             <DialogDescription className="text-xs">
-              Paste mobile numbers below (one per line). Format: <code>919876543210</code> or <code>919876543210, Name, Note</code>
+              Paste mobile numbers below (one per line). Format: <code>919876543210</code> or <code>919876543210, Name, Variable1</code>
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={manualText}
             onChange={(e) => setManualText(e.target.value)}
-            placeholder="919876543210, Rahul, Offer 20%&#10;919876543211, Priya&#10;919876543212"
+            placeholder="919876543210, Rahul Sharma, VIP 20%&#10;919876543211, Priya Verma&#10;919876543212"
             rows={8}
             className="font-mono text-xs"
           />
@@ -1049,7 +1702,7 @@ export default function SendMessagePage() {
           <DialogHeader>
             <DialogTitle>Generate Phone Numbers</DialogTitle>
             <DialogDescription className="text-xs">
-              Generate consecutive numbers for local campaigns.
+              Generate consecutive numbers for local promotional campaigns.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -1111,38 +1764,97 @@ export default function SendMessagePage() {
       {/* WhatsApp Message Preview Dialog */}
       <Dialog open={showPreviewModal} onOpenChange={setShowPreviewModal}>
         <DialogContent className="max-w-sm p-0 overflow-hidden bg-zinc-950 border-zinc-800">
-          <div className="bg-emerald-800 text-white p-3 flex items-center gap-3">
+          <div className="bg-[#075e54] text-white p-3 flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-xs">
               PS
             </div>
             <div>
               <div className="font-semibold text-xs leading-none">Pratap Store Official</div>
-              <div className="text-[10px] text-emerald-200">Online</div>
+              <div className="text-[10px] text-emerald-200">Online • WhatsApp Verified</div>
             </div>
           </div>
 
           <div
-            className="p-4 min-h-[340px] flex flex-col justify-end bg-repeat"
+            className="p-4 min-h-[380px] flex flex-col justify-end bg-repeat"
             style={{ backgroundColor: '#0b141a' }}
           >
-            <div className="max-w-[85%] self-end bg-[#005c4b] text-white p-3 rounded-xl rounded-tr-none text-xs shadow-md space-y-2">
+            <div className="max-w-[90%] self-end bg-[#005c4b] text-white p-3 rounded-xl rounded-tr-none text-xs shadow-md space-y-2">
+              {/* Media Preview */}
               {mediaUrl && (
-                <div className="rounded overflow-hidden bg-black/40 mb-1 max-h-40 flex items-center justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={mediaUrl} alt="media preview" className="object-cover max-h-40 w-full" />
+                <div className="rounded overflow-hidden bg-black/40 mb-1 max-h-44 flex items-center justify-center">
+                  {mediaUrl.toLowerCase().includes('.pdf') ? (
+                    <div className="p-4 text-center">
+                      <FileText className="w-10 h-10 text-red-400 mx-auto mb-1" />
+                      <div className="text-[11px] font-semibold">
+                        {uploadedFileName || 'Document.pdf'}
+                      </div>
+                      <div className="text-[9px] text-zinc-400">PDF Document</div>
+                    </div>
+                  ) : mediaUrl.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
+                    <div className="p-4 text-center">
+                      <Film className="w-10 h-10 text-blue-400 mx-auto mb-1" />
+                      <div className="text-[11px] font-semibold">Video Media</div>
+                    </div>
+                  ) : (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={mediaUrl} alt="media preview" className="object-cover max-h-44 w-full" />
+                  )}
                 </div>
               )}
-              <div className="whitespace-pre-wrap leading-relaxed">
+
+              {/* Header Text */}
+              {headerText && (
+                <div className="font-bold text-sm text-white/95 border-b border-white/10 pb-1">
+                  {headerText}
+                </div>
+              )}
+
+              {/* Body Text */}
+              <div className="whitespace-pre-wrap leading-relaxed text-zinc-100">
                 {messageText
                   .replace(/\{\{\s*(name|Name)\s*\}\}/g, recipients[0]?.name || 'Rahul Sharma')
                   .replace(/\{\{\s*(number|Number)\s*\}\}/g, recipients[0]?.number || '919876543210')
                   .replace(/\{\{\s*(var1|Variable1)\s*\}\}/g, recipients[0]?.var1 || 'Special Discount')}
               </div>
-              <div className="text-[10px] text-emerald-200 text-right flex items-center justify-end gap-1">
+
+              {/* Footer Text */}
+              {footerText && (
+                <div className="text-[10px] text-zinc-300 italic pt-0.5">
+                  {footerText}
+                </div>
+              )}
+
+              {/* Time Stamp */}
+              <div className="text-[10px] text-emerald-200 text-right flex items-center justify-end gap-1 pt-0.5">
                 <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 <span>✓✓</span>
               </div>
             </div>
+
+            {/* WhatsApp Buttons Preview (rendered below bubble just like WhatsApp) */}
+            {messageType === 'buttons' && buttons.length > 0 && (
+              <div className="max-w-[90%] self-end w-full space-y-1 mt-1">
+                {buttons.map((btn, i) => (
+                  <div
+                    key={i}
+                    className="bg-[#202c33] hover:bg-[#2a3942] text-teal-400 py-2 px-3 rounded-lg text-center text-xs font-semibold shadow transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>{btn.title || `Button ${i + 1}`}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* WhatsApp List Trigger Button Preview */}
+            {messageType === 'list' && (
+              <div className="max-w-[90%] self-end w-full mt-1">
+                <div className="bg-[#202c33] text-teal-400 py-2.5 px-3 rounded-lg text-center text-xs font-semibold shadow flex items-center justify-center gap-2 border border-zinc-800">
+                  <Menu className="w-3.5 h-3.5" />
+                  <span>{listButtonLabel || 'View Menu'}</span>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

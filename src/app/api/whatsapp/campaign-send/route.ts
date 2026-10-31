@@ -12,6 +12,81 @@ interface CampaignRecipient {
   var1?: string;
 }
 
+interface CampaignButton {
+  id: string;
+  title: string;
+}
+
+interface CampaignListSection {
+  title?: string;
+  rows: Array<{
+    id: string;
+    title: string;
+    description?: string;
+  }>;
+}
+
+interface CampaignListConfig {
+  buttonLabel: string;
+  sections: CampaignListSection[];
+}
+
+function formatBaileysButtons(
+  body: string,
+  header?: string,
+  footer?: string,
+  buttons?: CampaignButton[]
+): string {
+  const parts: string[] = [];
+  if (header?.trim()) parts.push(`*${header.trim()}*`);
+  if (body?.trim()) parts.push(body.trim());
+  if (buttons && buttons.length > 0) {
+    const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
+    const buttonLines = buttons.map(
+      (b, idx) => `${emojis[idx] || `[${idx + 1}]`} *${b.title.trim()}*`
+    );
+    parts.push(
+      `━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions:*\n${buttonLines.join('\n')}\n👉 _Reply with the number or option name_`
+    );
+  }
+  if (footer?.trim()) parts.push(`_${footer.trim()}_`);
+  return parts.join('\n\n');
+}
+
+function formatBaileysList(
+  body: string,
+  header?: string,
+  footer?: string,
+  buttonLabel?: string,
+  sections?: CampaignListSection[]
+): string {
+  const parts: string[] = [];
+  if (header?.trim()) parts.push(`*${header.trim()}*`);
+  if (body?.trim()) parts.push(body.trim());
+  if (sections && sections.length > 0) {
+    const listLines: string[] = [];
+    let count = 1;
+    for (const sec of sections) {
+      if (sec.title?.trim()) listLines.push(`\n📌 *${sec.title.trim()}*`);
+      for (const row of sec.rows || []) {
+        const desc = row.description?.trim() ? ` — ${row.description.trim()}` : '';
+        const numEmoji =
+          ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'][count - 1] ||
+          `[${count}]`;
+        listLines.push(`${numEmoji} *${row.title.trim()}*${desc}`);
+        count++;
+      }
+    }
+    parts.push(
+      `━━━━━━━━━━━━━━━━━━━━\n📋 *${
+        buttonLabel?.trim() || 'Menu Options'
+      }:*\n${listLines.join('\n')}\n👉 _Reply with the number or option title_`
+    );
+  }
+  if (footer?.trim()) parts.push(`_${footer.trim()}_`);
+  return parts.join('\n\n');
+}
+
 export async function POST(request: Request) {
   try {
     const { accountId, userId } = await requireRole('agent');
@@ -21,9 +96,13 @@ export async function POST(request: Request) {
       campaignName = 'Quick Campaign',
       instance = 'auto', // 'baileys' | 'meta' | 'auto'
       sessionId = 'primary',
-      messageType = 'text',
+      messageType = 'text', // 'text' | 'media' | 'buttons' | 'list'
       messageText = '',
       mediaUrl = '',
+      headerText = '',
+      footerText = '',
+      buttons = [] as CampaignButton[],
+      listConfig,
       recipients = [] as CampaignRecipient[],
       delaySeconds = 1,
     } = body;
@@ -65,7 +144,14 @@ export async function POST(request: Request) {
         user_id: userId,
         account_id: accountId,
         name: campaignName,
-        template_name: useBaileys ? 'direct_campaign' : 'custom_campaign',
+        template_name:
+          messageType === 'buttons'
+            ? 'interactive_buttons'
+            : messageType === 'list'
+            ? 'interactive_list'
+            : useBaileys
+            ? 'direct_campaign'
+            : 'custom_campaign',
         template_language: 'en',
         status: 'sending',
         total_recipients: recipients.length,
@@ -114,20 +200,37 @@ export async function POST(request: Request) {
         let sentMsgId = '';
 
         if (useBaileys) {
+          let textToSend = personalizedText;
+          if (messageType === 'buttons') {
+            textToSend = formatBaileysButtons(
+              personalizedText,
+              headerText,
+              footerText,
+              buttons
+            );
+          } else if (messageType === 'list') {
+            textToSend = formatBaileysList(
+              personalizedText,
+              headerText,
+              footerText,
+              listConfig?.buttonLabel,
+              listConfig?.sections
+            );
+          }
+
           const res = await sendBaileysMessage(
             accountId,
             cleanPhone,
             {
-              text: personalizedText,
+              text: textToSend,
               mediaUrl: mediaUrl || undefined,
-              caption: personalizedText,
+              caption: textToSend,
             },
             sessionId
           );
           sentMsgId = res.messageId;
         } else {
           // Meta Cloud API path
-          // First resolve or create contact
           let { data: contact } = await db
             .from('contacts')
             .select('id')
@@ -149,7 +252,6 @@ export async function POST(request: Request) {
           }
 
           if (contact) {
-            // Find or create conversation
             let { data: conv } = await db
               .from('conversations')
               .select('id')
@@ -171,18 +273,47 @@ export async function POST(request: Request) {
             }
 
             if (conv) {
+              let interactivePayload: any = null;
+              if (messageType === 'buttons') {
+                interactivePayload = {
+                  kind: 'buttons',
+                  body: personalizedText,
+                  header: headerText || undefined,
+                  footer: footerText || undefined,
+                  buttons: ((buttons as CampaignButton[]) || []).map((b: CampaignButton, idx: number) => ({
+                    id: b.id || `btn_${idx + 1}`,
+                    title: (b.title || '').slice(0, 20),
+                  })),
+                };
+              } else if (messageType === 'list') {
+                interactivePayload = {
+                  kind: 'list',
+                  body: personalizedText,
+                  header: headerText || undefined,
+                  footer: footerText || undefined,
+                  button_label: (listConfig?.buttonLabel || 'View options').slice(0, 20),
+                  sections: listConfig?.sections || [],
+                };
+              }
+
               const res = await sendMessageToConversation(db, accountId, {
                 conversationId: conv.id,
-                messageType: mediaUrl ? 'image' : 'text',
+                messageType:
+                  messageType === 'buttons' || messageType === 'list'
+                    ? 'interactive'
+                    : mediaUrl
+                    ? 'image'
+                    : 'text',
                 contentText: personalizedText,
                 mediaUrl: mediaUrl || undefined,
+                interactivePayload,
               });
               sentMsgId = res.messageId;
             }
           }
         }
 
-        // Auto-save contact into CRM database so user can see them in Contacts & Inbox!
+        // Auto-save contact and message into CRM database so user sees them in Contacts & Inbox!
         let { data: existingContact } = await db
           .from('contacts')
           .select('id')
@@ -226,11 +357,37 @@ export async function POST(request: Request) {
           }
 
           if (conversation) {
+            const interactivePayload =
+              messageType === 'buttons'
+                ? {
+                    kind: 'buttons',
+                    body: personalizedText,
+                    header: headerText || null,
+                    footer: footerText || null,
+                    buttons: buttons || [],
+                  }
+                : messageType === 'list'
+                ? {
+                    kind: 'list',
+                    body: personalizedText,
+                    header: headerText || null,
+                    footer: footerText || null,
+                    button_label: listConfig?.buttonLabel || 'Menu',
+                    sections: listConfig?.sections || [],
+                  }
+                : null;
+
             await db.from('messages').insert({
               conversation_id: conversation.id,
               sender_type: 'agent',
-              content_type: mediaUrl ? 'image' : 'text',
+              content_type:
+                messageType === 'buttons' || messageType === 'list'
+                  ? 'interactive'
+                  : mediaUrl
+                  ? 'image'
+                  : 'text',
               content_text: personalizedText,
+              interactive_payload: interactivePayload,
               media_url: mediaUrl || null,
               message_id: sentMsgId || `camp_${Date.now()}_${i}`,
               status: 'sent',
@@ -240,6 +397,12 @@ export async function POST(request: Request) {
               .from('conversations')
               .update({
                 last_message_at: new Date().toISOString(),
+                last_message_text:
+                  messageType === 'buttons'
+                    ? `[Buttons] ${personalizedText.slice(0, 30)}...`
+                    : messageType === 'list'
+                    ? `[List] ${personalizedText.slice(0, 30)}...`
+                    : personalizedText.slice(0, 50),
               })
               .eq('id', conversation.id);
           }

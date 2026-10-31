@@ -765,7 +765,7 @@ export function cleanOrphanSessions(accountId: string): void {
 export async function sendBaileysMessage(
   accountId: string,
   toPhone: string,
-  content: { text?: string; mediaUrl?: string; caption?: string },
+  content: { text?: string; mediaUrl?: string; caption?: string; fileName?: string; mimetype?: string },
   sessionId?: string
 ): Promise<{ messageId: string }> {
   let sessionKey = sessionId ? getSessionKey(accountId, sessionId) : null;
@@ -790,10 +790,29 @@ export async function sendBaileysMessage(
 
   let sentResult;
   if (content.mediaUrl) {
-    sentResult = await session.sock.sendMessage(jid, {
-      image: { url: content.mediaUrl },
-      caption: content.caption || content.text || '',
-    });
+    const urlLower = content.mediaUrl.toLowerCase();
+    const isPdf = urlLower.includes('.pdf') || content.mimetype === 'application/pdf';
+    const isVideo = urlLower.match(/\.(mp4|mov|avi|mkv|webm)$/i) || content.mimetype?.startsWith('video/');
+
+    if (isPdf) {
+      const fileName = content.fileName || content.mediaUrl.split('/').pop()?.split('?')[0] || 'document.pdf';
+      sentResult = await session.sock.sendMessage(jid, {
+        document: { url: content.mediaUrl },
+        mimetype: 'application/pdf',
+        fileName,
+        caption: content.caption || content.text || '',
+      });
+    } else if (isVideo) {
+      sentResult = await session.sock.sendMessage(jid, {
+        video: { url: content.mediaUrl },
+        caption: content.caption || content.text || '',
+      });
+    } else {
+      sentResult = await session.sock.sendMessage(jid, {
+        image: { url: content.mediaUrl },
+        caption: content.caption || content.text || '',
+      });
+    }
   } else {
     sentResult = await session.sock.sendMessage(jid, {
       text: content.text || '',
