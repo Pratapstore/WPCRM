@@ -44,7 +44,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "sendMessage": "Send Message"
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -66,7 +67,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
     "menuSettings": "Settings",
-    "menuSignOut": "Sign out"
+    "menuSignOut": "Sign out",
+    "sendMessage": "Send Message"
   },
   "ModeToggle": {
     "switchMode": "Switch to {mode} mode"
@@ -1617,12 +1619,11 @@
       "security": "Login & security",
       "appearance": "Appearance",
       "whatsapp": "WhatsApp",
-      "payments": "Payments & Razorpay",
       "templates": "Templates",
       "quick-replies": "Quick replies",
-      "inbox": "Inbox",
       "fields": "Fields & tags",
       "deals": "Deals & currency",
+      "inbox": "Inbox",
       "members": "Team members",
       "api": "API keys"
     },
@@ -1976,20 +1977,6 @@
       "wabaIdNotNumeric": "WhatsApp Business Account ID must contain only digits. Copy it from Meta → WhatsApp → API Setup.",
       "wabaSubscribed": "The WhatsApp Business Account is subscribed to this app — inbound webhooks can be delivered.",
       "wabaNotSubscribed": "The WhatsApp Business Account is not subscribed to this app, so Meta will not deliver inbound webhooks. Re-enter the access token and save again to subscribe it."
-    },
-    "sections": {
-      "overview": "Overview",
-      "profile": "Your profile",
-      "security": "Login & security",
-      "appearance": "Appearance",
-      "whatsapp": "WhatsApp",
-      "templates": "Templates",
-      "quick-replies": "Quick replies",
-      "fields": "Fields & tags",
-      "deals": "Deals & currency",
-      "inbox": "Inbox",
-      "members": "Team members",
-      "api": "API keys"
     },
     "groups": {
       "account": "Account",

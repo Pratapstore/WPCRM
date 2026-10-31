@@ -44,7 +44,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "sendMessage": "Enviar Mensaje"
   },
   "Header": {
     "dashboard": "Panel",
@@ -66,7 +67,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configuración",
-    "menuSignOut": "Cerrar sesión"
+    "menuSignOut": "Cerrar sesión",
+    "sendMessage": "Enviar Mensaje"
   },
   "ModeToggle": {
     "switchMode": "Cambiar al modo {mode}"
@@ -1614,15 +1616,14 @@
     "sections": {
       "overview": "Resumen",
       "profile": "Tu perfil",
-      "security": "Inicio de sesión y seguridad",
+      "security": "Acceso y seguridad",
       "appearance": "Apariencia",
       "whatsapp": "WhatsApp",
-      "payments": "Pagos y Razorpay",
       "templates": "Plantillas",
       "quick-replies": "Respuestas rápidas",
-      "inbox": "Bandeja de entrada",
       "fields": "Campos y etiquetas",
-      "deals": "Tratos y moneda",
+      "deals": "Negocios y moneda",
+      "inbox": "Bandeja de entrada",
       "members": "Miembros del equipo",
       "api": "Claves de API"
     },
@@ -1976,20 +1977,6 @@
       "wabaIdNotNumeric": "El ID de la cuenta de WhatsApp Business debe contener solo dígitos. Cópialo desde Meta → WhatsApp → Configuración de la API.",
       "wabaSubscribed": "La cuenta de WhatsApp Business está suscrita a esta app: los webhooks entrantes pueden entregarse.",
       "wabaNotSubscribed": "La cuenta de WhatsApp Business no está suscrita a esta app, así que Meta no entregará webhooks entrantes. Vuelve a ingresar el token de acceso y guarda de nuevo para suscribirla."
-    },
-    "sections": {
-      "overview": "Resumen",
-      "profile": "Tu perfil",
-      "security": "Acceso y seguridad",
-      "appearance": "Apariencia",
-      "whatsapp": "WhatsApp",
-      "templates": "Plantillas",
-      "quick-replies": "Respuestas rápidas",
-      "fields": "Campos y etiquetas",
-      "deals": "Negocios y moneda",
-      "inbox": "Bandeja de entrada",
-      "members": "Miembros del equipo",
-      "api": "Claves de API"
     },
     "groups": {
       "account": "Cuenta",

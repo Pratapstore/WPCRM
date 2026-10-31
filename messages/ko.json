@@ -44,7 +44,8 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "sendMessage": "메시지 보내기"
   },
   "Header": {
     "dashboard": "대시보드",
@@ -66,7 +67,8 @@
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
     "menuSettings": "설정",
-    "menuSignOut": "로그아웃"
+    "menuSignOut": "로그아웃",
+    "sendMessage": "메시지 보내기"
   },
   "ModeToggle": {
     "switchMode": "{mode} 모드로 전환"

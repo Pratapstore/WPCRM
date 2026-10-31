@@ -44,7 +44,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configurações",
-    "menuSignOut": "Sair"
+    "menuSignOut": "Sair",
+    "sendMessage": "Enviar Mensagem"
   },
   "Header": {
     "dashboard": "Painel",
@@ -66,7 +67,8 @@
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
     "menuSettings": "Configurações",
-    "menuSignOut": "Sair"
+    "menuSignOut": "Sair",
+    "sendMessage": "Enviar Mensagem"
   },
   "ModeToggle": {
     "switchMode": "Mudar para o modo {mode}"
