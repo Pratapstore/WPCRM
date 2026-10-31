@@ -1,8 +1,3 @@
-import dns from 'node:dns';
-try {
-  dns.setDefaultResultOrder('ipv4first');
-} catch {}
-
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/account';
 import { getBaileysSession, sendBaileysMessage } from '@/lib/whatsapp/baileys-service';

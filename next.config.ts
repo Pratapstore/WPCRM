@@ -1,3 +1,11 @@
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const dns = require("dns");
+  if (dns && typeof dns.setDefaultResultOrder === "function") {
+    dns.setDefaultResultOrder("ipv4first");
+  }
+} catch {}
+
 import type { NextConfig } from "next";
 import path from "path";
 import createNextIntlPlugin from "next-intl/plugin";
