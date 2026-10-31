@@ -158,7 +158,11 @@ export default function SendMessagePage() {
   const [campaignName, setCampaignName] = useState(`Campaign ${new Date().toLocaleDateString('en-IN')}`);
   const [selectedTemplateId, setSelectedTemplateId] = useState('custom_text');
   const [selectedInstance, setSelectedInstance] = useState('auto');
-  const [messageType, setMessageType] = useState<'text' | 'media' | 'buttons' | 'list'>('text');
+  const [messageType, setMessageType] = useState<'template' | 'buttons' | 'list' | 'text' | 'media'>('template');
+  
+  // Meta Approved Templates State
+  const [approvedTemplates, setApprovedTemplates] = useState<any[]>([]);
+  const [selectedMetaTemplateName, setSelectedMetaTemplateName] = useState('welcome_greeting');
   
   // Media State
   const [mediaUrl, setMediaUrl] = useState('');
@@ -274,8 +278,25 @@ export default function SendMessagePage() {
     }
   }
 
+  // Fetch Approved Meta Templates
+  async function fetchApprovedTemplates() {
+    try {
+      const res = await fetch('/api/whatsapp/templates');
+      const data = await res.json();
+      if (data.templates && Array.isArray(data.templates) && data.templates.length > 0) {
+        setApprovedTemplates(data.templates);
+        const preferred =
+          data.templates.find((t: any) => t.name === 'welcome_greeting') ||
+          data.templates.find((t: any) => t.name === 'mainmenu') ||
+          data.templates[0];
+        setSelectedMetaTemplateName(preferred.name);
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     fetchInstances();
+    fetchApprovedTemplates();
     const interval = setInterval(fetchInstances, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -615,7 +636,12 @@ export default function SendMessagePage() {
       toast.error('Please add at least one recipient number');
       return;
     }
-    if (!messageText.trim() && !mediaUrl.trim()) {
+    if (messageType === 'template') {
+      if (!selectedMetaTemplateName) {
+        toast.error('Please select an Approved Meta Template');
+        return;
+      }
+    } else if (!messageText.trim() && !mediaUrl.trim()) {
       toast.error('Please compose a message or upload media');
       return;
     }
@@ -665,6 +691,8 @@ export default function SendMessagePage() {
           campaignName,
           instance: selectedInstance,
           messageType,
+          templateName: messageType === 'template' ? selectedMetaTemplateName : undefined,
+          templateLanguage: 'en_US',
           messageText,
           mediaUrl: mediaUrl || undefined,
           headerText: headerText || undefined,
@@ -877,16 +905,22 @@ export default function SendMessagePage() {
             </label>
             <Select
               value={messageType}
-              onValueChange={(val) => val && setMessageType(val as 'text' | 'media' | 'buttons' | 'list')}
+              onValueChange={(val) =>
+                val &&
+                setMessageType(val as 'template' | 'text' | 'media' | 'buttons' | 'list')
+              }
             >
               <SelectTrigger className="bg-background/50 h-9 font-medium">
                 <SelectValue placeholder="Message type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="text">📝 Text Message</SelectItem>
-                <SelectItem value="media">🖼️ Media (Image / Banner / PDF)</SelectItem>
+                <SelectItem value="template">
+                  ⭐ 📋 Meta Approved Template (100% Delivery to ANY New Customer)
+                </SelectItem>
                 <SelectItem value="buttons">🔘 Interactive Buttons (1–3 Quick Replies)</SelectItem>
                 <SelectItem value="list">📋 Interactive List Menu (Expandable Menu)</SelectItem>
+                <SelectItem value="text">📝 Text Message (24h Window / QR)</SelectItem>
+                <SelectItem value="media">🖼️ Media Image / Banner / PDF (24h Window / QR)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1263,13 +1297,48 @@ export default function SendMessagePage() {
         </CardContent>
       </Card>
 
+      {/* Smart Hint Banner for New Customers */}
+      {messageType !== 'template' && (
+        <div className="flex items-start gap-3 p-3.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-200 text-xs shadow-sm">
+          <Sparkles className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-1">
+            <div className="font-semibold text-amber-300">
+              Sending to New Customers? (WhatsApp 24-Hour Rule)
+            </div>
+            <div className="text-amber-200/90 leading-relaxed">
+              Meta WhatsApp Cloud API blocks custom text/media to new numbers who haven&apos;t messaged you in 24 hours (Error 131047). To guarantee 100% instant delivery to ANY new customer, select <strong>Meta Approved Template</strong>. Or link your phone via <strong>WhatsApp QR</strong> to send custom text/buttons to anyone without restrictions.
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMessageType('template')}
+                className="h-7 text-xs bg-amber-500/20 border-amber-500/40 hover:bg-amber-500/30 text-amber-100"
+              >
+                ⭐ Switch to Meta Approved Template
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowQrModal(true)}
+                className="h-7 text-xs text-amber-300 hover:text-amber-100 hover:bg-amber-500/20"
+              >
+                Scan WhatsApp QR Code →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Section 3: Message Composer */}
       <Card className="border-border/50 bg-card/60 backdrop-blur-sm shadow-sm">
         <CardHeader className="py-4 border-b border-border/40">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-muted text-muted-foreground text-xs font-semibold">3</span>
             <CardTitle className="text-base font-semibold">
-              {messageType === 'buttons'
+              {messageType === 'template'
+                ? 'Meta Approved Template Selector'
+                : messageType === 'buttons'
                 ? 'Interactive Button Message Builder'
                 : messageType === 'list'
                 ? 'Interactive List Menu Builder'
@@ -1277,7 +1346,9 @@ export default function SendMessagePage() {
             </CardTitle>
           </div>
           <CardDescription className="text-xs">
-            {messageType === 'buttons'
+            {messageType === 'template'
+              ? 'WhatsApp guarantees 100% instant delivery for approved templates to ANY new customer, opening the 24-hour chat window.'
+              : messageType === 'buttons'
               ? 'Configure WhatsApp Quick Reply buttons (up to 3 buttons) that recipients can tap with 1 click.'
               : messageType === 'list'
               ? 'Configure a tap-to-expand list menu (up to 10 rows) with section headings and row descriptions.'
@@ -1286,8 +1357,128 @@ export default function SendMessagePage() {
         </CardHeader>
 
         <CardContent className="pt-4 space-y-4">
-          {/* Header Text (for Buttons or List) */}
-          {(messageType === 'buttons' || messageType === 'list') && (
+          {messageType === 'template' ? (
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-foreground">
+                    <span className="text-destructive">*</span> Select Approved Template
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={fetchApprovedTemplates}
+                    className="h-6 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Refresh Templates
+                  </Button>
+                </div>
+                <Select
+                  value={selectedMetaTemplateName}
+                  onValueChange={(val) => val && setSelectedMetaTemplateName(val)}
+                >
+                  <SelectTrigger className="bg-background/50 h-10 font-medium">
+                    <SelectValue placeholder="Choose a Meta template" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {approvedTemplates.map((t) => (
+                      <SelectItem key={t.id} value={t.name}>
+                        {t.name} • {t.category || 'Marketing'} ({t.language})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Template Live Inspector Card */}
+              {(() => {
+                const activeTmpl =
+                  approvedTemplates.find((t) => t.name === selectedMetaTemplateName) ||
+                  approvedTemplates[0];
+                if (!activeTmpl) {
+                  return (
+                    <div className="p-4 rounded-lg bg-muted/20 border border-border/40 text-center text-xs text-muted-foreground">
+                      No approved templates found. Please create or sync templates in Settings &gt; WhatsApp.
+                    </div>
+                  );
+                }
+
+                const sampleName = recipients[0]?.name || 'Rahul Sharma';
+                const sampleVar1 = recipients[0]?.var1 || '10% OFF';
+                const previewBody = (activeTmpl.body_text || '')
+                  .replace(/\{\{1\}\}/g, sampleName)
+                  .replace(/\{\{2\}\}/g, sampleVar1);
+
+                return (
+                  <div className="p-4 rounded-xl bg-card border border-border/60 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-border/40">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-foreground">
+                          {activeTmpl.name}
+                        </span>
+                        <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">
+                          {activeTmpl.category || 'Marketing'}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                          ✓ APPROVED by Meta
+                        </Badge>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Language: {activeTmpl.language || 'en_US'}
+                      </span>
+                    </div>
+
+                    {activeTmpl.header_content && (
+                      <div className="text-xs font-bold text-primary">
+                        {activeTmpl.header_content}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-muted-foreground">
+                      Body Preview:
+                    </div>
+                    <div className="p-3 rounded-lg bg-muted/30 border border-border/30 text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+                      {previewBody}
+                    </div>
+
+                    {activeTmpl.footer_text && (
+                      <div className="text-[11px] text-muted-foreground italic">
+                        Footer: {activeTmpl.footer_text}
+                      </div>
+                    )}
+
+                    {Array.isArray(activeTmpl.buttons) && activeTmpl.buttons.length > 0 && (
+                      <div className="pt-2 border-t border-border/40">
+                        <div className="text-[11px] font-medium text-muted-foreground mb-1.5">
+                          Interactive Quick Reply Buttons:
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {activeTmpl.buttons.map((btn: any, idx: number) => (
+                            <span
+                              key={idx}
+                              className="px-2.5 py-1 rounded bg-primary/15 text-primary text-xs font-medium border border-primary/20"
+                            >
+                              🔘 {btn.text || btn.title || `Button ${idx + 1}`}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>
+                        <strong>Guaranteed 100% Delivery:</strong> Meta WhatsApp Cloud API accepts this template for all new phone numbers without 24h restrictions.
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <>
+              {/* Header Text (for Buttons or List) */}
+              {(messageType === 'buttons' || messageType === 'list') && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-medium text-foreground">
@@ -1615,8 +1806,10 @@ export default function SendMessagePage() {
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </>
+      )}
+    </CardContent>
+  </Card>
 
       {/* Section 4: Delivery Settings */}
       <Card className="border-border/50 bg-card/60 backdrop-blur-sm shadow-sm">
@@ -1819,83 +2012,118 @@ export default function SendMessagePage() {
             className="p-4 min-h-[380px] flex flex-col justify-end bg-repeat"
             style={{ backgroundColor: '#0b141a' }}
           >
-            <div className="max-w-[90%] self-end bg-[#005c4b] text-white p-3 rounded-xl rounded-tr-none text-xs shadow-md space-y-2">
-              {/* Media Preview */}
-              {mediaUrl && (
-                <div className="rounded overflow-hidden bg-black/40 mb-1 max-h-44 flex items-center justify-center">
-                  {mediaUrl.toLowerCase().includes('.pdf') ? (
-                    <div className="p-4 text-center">
-                      <FileText className="w-10 h-10 text-red-400 mx-auto mb-1" />
-                      <div className="text-[11px] font-semibold">
-                        {uploadedFileName || 'Document.pdf'}
+            {(() => {
+              const activeTmpl =
+                messageType === 'template'
+                  ? approvedTemplates.find((t) => t.name === selectedMetaTemplateName) ||
+                    approvedTemplates[0]
+                  : null;
+
+              const sampleName = recipients[0]?.name || 'Rahul Sharma';
+              const sampleNumber = recipients[0]?.number || '919876543210';
+              const sampleVar1 = recipients[0]?.var1 || '10% OFF';
+
+              let displayHeader = headerText;
+              let displayBody = messageText
+                .replace(/\{\{\s*(name|Name)\s*\}\}/g, sampleName)
+                .replace(/\{\{\s*(number|Number)\s*\}\}/g, sampleNumber)
+                .replace(/\{\{\s*(var1|Variable1)\s*\}\}/g, sampleVar1);
+              let displayFooter = footerText;
+              let displayButtons: Array<{ title: string }> = messageType === 'buttons' ? buttons : [];
+
+              if (activeTmpl) {
+                displayHeader = activeTmpl.header_content || '';
+                displayBody = (activeTmpl.body_text || '')
+                  .replace(/\{\{1\}\}/g, sampleName)
+                  .replace(/\{\{2\}\}/g, sampleVar1);
+                displayFooter = activeTmpl.footer_text || '';
+                displayButtons = Array.isArray(activeTmpl.buttons)
+                  ? activeTmpl.buttons.map((b: any, idx: number) => ({
+                      title: b.text || b.title || `Option ${idx + 1}`,
+                    }))
+                  : [];
+              }
+
+              return (
+                <>
+                  <div className="max-w-[90%] self-end bg-[#005c4b] text-white p-3 rounded-xl rounded-tr-none text-xs shadow-md space-y-2">
+                    {/* Media Preview */}
+                    {mediaUrl && (
+                      <div className="rounded overflow-hidden bg-black/40 mb-1 max-h-44 flex items-center justify-center">
+                        {mediaUrl.toLowerCase().includes('.pdf') ? (
+                          <div className="p-4 text-center">
+                            <FileText className="w-10 h-10 text-red-400 mx-auto mb-1" />
+                            <div className="text-[11px] font-semibold">
+                              {uploadedFileName || 'Document.pdf'}
+                            </div>
+                            <div className="text-[9px] text-zinc-400">PDF Document</div>
+                          </div>
+                        ) : mediaUrl.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
+                          <div className="p-4 text-center">
+                            <Film className="w-10 h-10 text-blue-400 mx-auto mb-1" />
+                            <div className="text-[11px] font-semibold">Video Media</div>
+                          </div>
+                        ) : (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img src={mediaUrl} alt="media preview" className="object-cover max-h-44 w-full" />
+                        )}
                       </div>
-                      <div className="text-[9px] text-zinc-400">PDF Document</div>
+                    )}
+
+                    {/* Header Text */}
+                    {displayHeader && (
+                      <div className="font-bold text-sm text-white/95 border-b border-white/10 pb-1">
+                        {displayHeader}
+                      </div>
+                    )}
+
+                    {/* Body Text */}
+                    <div className="whitespace-pre-wrap leading-relaxed text-zinc-100">
+                      {displayBody}
                     </div>
-                  ) : mediaUrl.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
-                    <div className="p-4 text-center">
-                      <Film className="w-10 h-10 text-blue-400 mx-auto mb-1" />
-                      <div className="text-[11px] font-semibold">Video Media</div>
+
+                    {/* Footer Text */}
+                    {displayFooter && (
+                      <div className="text-[10px] text-zinc-300 italic pt-0.5">
+                        {displayFooter}
+                      </div>
+                    )}
+
+                    {/* Time Stamp */}
+                    <div className="text-[10px] text-emerald-200 text-right flex items-center justify-end gap-1 pt-0.5">
+                      <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>✓✓</span>
                     </div>
-                  ) : (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={mediaUrl} alt="media preview" className="object-cover max-h-44 w-full" />
-                  )}
-                </div>
-              )}
-
-              {/* Header Text */}
-              {headerText && (
-                <div className="font-bold text-sm text-white/95 border-b border-white/10 pb-1">
-                  {headerText}
-                </div>
-              )}
-
-              {/* Body Text */}
-              <div className="whitespace-pre-wrap leading-relaxed text-zinc-100">
-                {messageText
-                  .replace(/\{\{\s*(name|Name)\s*\}\}/g, recipients[0]?.name || 'Rahul Sharma')
-                  .replace(/\{\{\s*(number|Number)\s*\}\}/g, recipients[0]?.number || '919876543210')
-                  .replace(/\{\{\s*(var1|Variable1)\s*\}\}/g, recipients[0]?.var1 || 'Special Discount')}
-              </div>
-
-              {/* Footer Text */}
-              {footerText && (
-                <div className="text-[10px] text-zinc-300 italic pt-0.5">
-                  {footerText}
-                </div>
-              )}
-
-              {/* Time Stamp */}
-              <div className="text-[10px] text-emerald-200 text-right flex items-center justify-end gap-1 pt-0.5">
-                <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                <span>✓✓</span>
-              </div>
-            </div>
-
-            {/* WhatsApp Buttons Preview (rendered below bubble just like WhatsApp) */}
-            {messageType === 'buttons' && buttons.length > 0 && (
-              <div className="max-w-[90%] self-end w-full space-y-1 mt-1">
-                {buttons.map((btn, i) => (
-                  <div
-                    key={i}
-                    className="bg-[#202c33] hover:bg-[#2a3942] text-teal-400 py-2 px-3 rounded-lg text-center text-xs font-semibold shadow transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>{btn.title || `Button ${i + 1}`}</span>
                   </div>
-                ))}
-              </div>
-            )}
 
-            {/* WhatsApp List Trigger Button Preview */}
-            {messageType === 'list' && (
-              <div className="max-w-[90%] self-end w-full mt-1">
-                <div className="bg-[#202c33] text-teal-400 py-2.5 px-3 rounded-lg text-center text-xs font-semibold shadow flex items-center justify-center gap-2 border border-zinc-800">
-                  <Menu className="w-3.5 h-3.5" />
-                  <span>{listButtonLabel || 'View Menu'}</span>
-                </div>
-              </div>
-            )}
+                  {/* WhatsApp Buttons Preview (rendered below bubble just like WhatsApp) */}
+                  {(messageType === 'buttons' || (messageType === 'template' && displayButtons.length > 0)) &&
+                    displayButtons.length > 0 && (
+                      <div className="max-w-[90%] self-end w-full space-y-1 mt-1">
+                        {displayButtons.map((btn, i) => (
+                          <div
+                            key={i}
+                            className="bg-[#202c33] hover:bg-[#2a3942] text-teal-400 py-2 px-3 rounded-lg text-center text-xs font-semibold shadow transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-800"
+                          >
+                            <Smartphone className="w-3.5 h-3.5" />
+                            <span>{btn.title || `Button ${i + 1}`}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                  {/* WhatsApp List Trigger Button Preview */}
+                  {messageType === 'list' && (
+                    <div className="max-w-[90%] self-end w-full mt-1">
+                      <div className="bg-[#202c33] text-teal-400 py-2.5 px-3 rounded-lg text-center text-xs font-semibold shadow flex items-center justify-center gap-2 border border-zinc-800">
+                        <Menu className="w-3.5 h-3.5" />
+                        <span>{listButtonLabel || 'View Menu'}</span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </DialogContent>
       </Dialog>

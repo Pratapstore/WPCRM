@@ -104,7 +104,9 @@ export async function POST(request: Request) {
       campaignName = 'Quick Campaign',
       instance = 'auto', // 'baileys' | 'meta' | 'auto'
       sessionId = 'primary',
-      messageType = 'text', // 'text' | 'media' | 'buttons' | 'list'
+      messageType = 'text', // 'template' | 'text' | 'media' | 'buttons' | 'list'
+      templateName = '',
+      templateLanguage = 'en_US',
       messageText = '',
       mediaUrl = '',
       headerText = '',
@@ -115,7 +117,14 @@ export async function POST(request: Request) {
       delaySeconds = 1,
     } = body;
 
-    if (!messageText && !mediaUrl) {
+    if (messageType === 'template' && !templateName) {
+      return NextResponse.json(
+        { error: 'Template name is required for template campaigns' },
+        { status: 400 }
+      );
+    }
+
+    if (messageType !== 'template' && !messageText && !mediaUrl) {
       return NextResponse.json(
         { error: 'Message text or media is required' },
         { status: 400 }
@@ -132,6 +141,18 @@ export async function POST(request: Request) {
     const db = supabaseAdmin();
     const baileysSession = getBaileysSession(accountId, sessionId);
     const isBaileysConnected = baileysSession.status === 'connected';
+
+    // If template message, load template definition from database
+    let templateDbRow: any = null;
+    if (messageType === 'template' && templateName) {
+      const { data: tmpl } = await db
+        .from('message_templates')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('name', templateName)
+        .maybeSingle();
+      templateDbRow = tmpl;
+    }
 
     // Check Meta configuration
     const { data: metaConfig } = await db
@@ -247,12 +268,49 @@ export async function POST(request: Request) {
         .replace(/\{\{\s*(number|Number|phone|Phone)\s*\}\}/g, cleanPhone)
         .replace(/\{\{\s*(var1|Variable1|Variable 1|var_1)\s*\}\}/g, r.var1 || '');
 
+      // Prepare template variables if template message
+      const templateParams: string[] = [];
+      let templateRenderedBody = personalizedText;
+      if (messageType === 'template' && templateDbRow) {
+        const sampleBody = (templateDbRow.sample_values?.body_text as string[]) || [];
+        const varMatches = (templateDbRow.body_text || '').match(/\{\{\d+\}\}/g) || [];
+        const varCount = varMatches.length;
+
+        for (let idx = 0; idx < varCount; idx++) {
+          if (idx === 0) {
+            templateParams.push(r.name || sampleBody[0] || 'Friend');
+          } else if (idx === 1) {
+            templateParams.push(r.var1 || sampleBody[1] || '10% OFF');
+          } else {
+            templateParams.push(sampleBody[idx] || `Value ${idx + 1}`);
+          }
+        }
+
+        let rendered = templateDbRow.body_text || '';
+        templateParams.forEach((val, pIdx) => {
+          rendered = rendered.replace(new RegExp(`\\{\\{${pIdx + 1}\\}\\}`, 'g'), val);
+        });
+        templateRenderedBody = rendered;
+      }
+
       try {
         let sentMsgId = '';
 
         if (useBaileys) {
           let textToSend = personalizedText;
-          if (messageType === 'buttons') {
+          if (messageType === 'template' && templateDbRow) {
+            const parts: string[] = [];
+            if (templateDbRow.header_content) parts.push(`*${templateDbRow.header_content}*`);
+            parts.push(templateRenderedBody);
+            if (templateDbRow.footer_text) parts.push(`_${templateDbRow.footer_text}_`);
+            if (Array.isArray(templateDbRow.buttons) && templateDbRow.buttons.length > 0) {
+              const actionCards = templateDbRow.buttons.map(
+                (b: any) => `🔘 *[ ${b.text || b.title} ]*`
+              );
+              parts.push(`━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions:*\n${actionCards.join('\n')}`);
+            }
+            textToSend = parts.join('\n\n');
+          } else if (messageType === 'buttons') {
             textToSend = formatBaileysButtons(
               personalizedText,
               headerText,
@@ -324,44 +382,56 @@ export async function POST(request: Request) {
             }
 
             if (conv) {
-              let interactivePayload: any = null;
-              if (messageType === 'buttons') {
-                interactivePayload = {
-                  kind: 'buttons',
-                  body: personalizedText,
-                  header: headerText || undefined,
-                  footer: footerText || undefined,
-                  buttons: ((buttons as CampaignButton[]) || []).map(
-                    (b: CampaignButton, idx: number) => ({
-                      id: b.id || `btn_${idx + 1}`,
-                      title: (b.title || '').slice(0, 20),
-                    })
-                  ),
-                };
-              } else if (messageType === 'list') {
-                interactivePayload = {
-                  kind: 'list',
-                  body: personalizedText,
-                  header: headerText || undefined,
-                  footer: footerText || undefined,
-                  button_label: (listConfig?.buttonLabel || 'View options').slice(0, 20),
-                  sections: listConfig?.sections || [],
-                };
-              }
+              if (messageType === 'template') {
+                const res = await sendMessageToConversation(db, accountId, {
+                  conversationId: conv.id,
+                  messageType: 'template',
+                  templateName,
+                  templateLanguage: templateLanguage || templateDbRow?.language || 'en_US',
+                  templateParams: templateParams.length > 0 ? templateParams : undefined,
+                  contentText: templateRenderedBody || undefined,
+                });
+                sentMsgId = res.messageId;
+              } else {
+                let interactivePayload: any = null;
+                if (messageType === 'buttons') {
+                  interactivePayload = {
+                    kind: 'buttons',
+                    body: personalizedText,
+                    header: headerText || undefined,
+                    footer: footerText || undefined,
+                    buttons: ((buttons as CampaignButton[]) || []).map(
+                      (b: CampaignButton, idx: number) => ({
+                        id: b.id || `btn_${idx + 1}`,
+                        title: (b.title || '').slice(0, 20),
+                      })
+                    ),
+                  };
+                } else if (messageType === 'list') {
+                  interactivePayload = {
+                    kind: 'list',
+                    body: personalizedText,
+                    header: headerText || undefined,
+                    footer: footerText || undefined,
+                    button_label: (listConfig?.buttonLabel || 'View options').slice(0, 20),
+                    sections: listConfig?.sections || [],
+                  };
+                }
 
-              const res = await sendMessageToConversation(db, accountId, {
-                conversationId: conv.id,
-                messageType:
-                  messageType === 'buttons' || messageType === 'list'
-                    ? 'interactive'
-                    : mediaUrl
-                    ? mediaKind
-                    : 'text',
-                contentText: personalizedText,
-                mediaUrl: mediaUrl || undefined,
-                interactivePayload,
-              });
-              sentMsgId = res.messageId;
+                const res = await sendMessageToConversation(db, accountId, {
+                  conversationId: conv.id,
+                  messageType:
+                    messageType === 'buttons' || messageType === 'list'
+                      ? 'interactive'
+                      : mediaUrl
+                      ? mediaKind
+                      : 'text',
+                  contentText: personalizedText,
+                  mediaUrl: mediaUrl || undefined,
+                  interactivePayload,
+                });
+                sentMsgId = res.messageId;
+              }
             }
           }
         }
@@ -434,12 +504,14 @@ export async function POST(request: Request) {
               conversation_id: conversation.id,
               sender_type: 'agent',
               content_type:
-                messageType === 'buttons' || messageType === 'list'
+                messageType === 'template'
+                  ? 'template'
+                  : messageType === 'buttons' || messageType === 'list'
                   ? 'interactive'
                   : mediaUrl
                   ? mediaKind
                   : 'text',
-              content_text: personalizedText,
+              content_text: messageType === 'template' ? templateRenderedBody : personalizedText,
               interactive_payload: interactivePayload,
               media_url: mediaUrl || null,
               message_id: sentMsgId || `camp_${Date.now()}_${i}`,
@@ -451,7 +523,9 @@ export async function POST(request: Request) {
               .update({
                 last_message_at: new Date().toISOString(),
                 last_message_text:
-                  messageType === 'buttons'
+                  messageType === 'template'
+                    ? `[Template: ${templateName}] ${(templateRenderedBody || '').slice(0, 40)}...`
+                    : messageType === 'buttons'
                     ? `[Buttons] ${personalizedText.slice(0, 30)}...`
                     : messageType === 'list'
                     ? `[List] ${personalizedText.slice(0, 30)}...`
@@ -468,13 +542,22 @@ export async function POST(request: Request) {
           messageId: sentMsgId,
         });
         sentCount++;
-      } catch (sendErr) {
+      } catch (sendErr: any) {
         console.error(`[campaign-send] Failed to send to ${cleanPhone}:`, sendErr);
+        let errorMsg = sendErr instanceof Error ? sendErr.message : 'Send failed';
+        if (
+          errorMsg.includes('131047') ||
+          errorMsg.includes('24 hours') ||
+          errorMsg.includes('Re-engagement message')
+        ) {
+          errorMsg =
+            'Meta 24-hr Policy: WhatsApp requires an Approved Template to message new customers. Select "Meta Approved Template" above (e.g. welcome_greeting) or link your phone via QR.';
+        }
         results.push({
           phone: cleanPhone,
           name: r.name,
           status: 'failed',
-          error: sendErr instanceof Error ? sendErr.message : 'Send failed',
+          error: errorMsg,
         });
         failedCount++;
       }
