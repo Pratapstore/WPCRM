@@ -348,15 +348,20 @@ export async function POST(request: Request) {
             .maybeSingle();
 
           if (!contact) {
-            const { data: newContact } = await db
+            const { data: newContact, error: ce } = await db
               .from('contacts')
               .insert({
+                user_id: userId,
                 account_id: accountId,
                 phone: cleanPhone,
                 name: r.name || `Customer ${cleanPhone.slice(-4)}`,
               })
               .select('id')
               .single();
+            if (ce) {
+              console.error('[campaign-send] Failed to create contact:', ce);
+              throw new Error(`Failed to create contact for ${cleanPhone}: ${ce.message}`);
+            }
             contact = newContact;
           }
 
@@ -369,15 +374,21 @@ export async function POST(request: Request) {
               .maybeSingle();
 
             if (!conv) {
-              const { data: newConv } = await db
+              const { data: newConv, error: cve } = await db
                 .from('conversations')
                 .insert({
+                  user_id: userId,
                   account_id: accountId,
                   contact_id: contact.id,
                   status: 'open',
+                  last_message_at: new Date().toISOString(),
                 })
                 .select('id')
                 .single();
+              if (cve) {
+                console.error('[campaign-send] Failed to create conv:', cve);
+                throw new Error(`Failed to create conversation for ${cleanPhone}: ${cve.message}`);
+              }
               conv = newConv;
             }
 
@@ -436,103 +447,111 @@ export async function POST(request: Request) {
           }
         }
 
-        // Auto-save contact and message into CRM database so user sees them in Contacts & Inbox!
-        let { data: existingContact } = await db
-          .from('contacts')
-          .select('id')
-          .eq('account_id', accountId)
-          .eq('phone', cleanPhone)
-          .maybeSingle();
-
-        if (!existingContact) {
-          const { data: createdContact } = await db
+        // For Baileys sends, persist contact, conversation, and message into DB
+        if (useBaileys) {
+          let { data: existingContact } = await db
             .from('contacts')
-            .insert({
-              account_id: accountId,
-              phone: cleanPhone,
-              name: r.name || `Customer ${cleanPhone.slice(-4)}`,
-            })
-            .select('id')
-            .single();
-          existingContact = createdContact;
-        }
-
-        if (existingContact) {
-          let { data: conversation } = await db
-            .from('conversations')
             .select('id')
             .eq('account_id', accountId)
-            .eq('contact_id', existingContact.id)
+            .eq('phone', cleanPhone)
             .maybeSingle();
 
-          if (!conversation) {
-            const { data: createdConv } = await db
-              .from('conversations')
+          if (!existingContact) {
+            const { data: createdContact } = await db
+              .from('contacts')
               .insert({
+                user_id: userId,
                 account_id: accountId,
-                contact_id: existingContact.id,
-                status: 'open',
-                last_message_at: new Date().toISOString(),
+                phone: cleanPhone,
+                name: r.name || `Customer ${cleanPhone.slice(-4)}`,
               })
               .select('id')
               .single();
-            conversation = createdConv;
+            existingContact = createdContact;
           }
 
-          if (conversation) {
-            const interactivePayload =
-              messageType === 'buttons'
-                ? {
-                    kind: 'buttons',
-                    body: personalizedText,
-                    header: headerText || null,
-                    footer: footerText || null,
-                    buttons: buttons || [],
-                  }
-                : messageType === 'list'
-                ? {
-                    kind: 'list',
-                    body: personalizedText,
-                    header: headerText || null,
-                    footer: footerText || null,
-                    button_label: listConfig?.buttonLabel || 'Menu',
-                    sections: listConfig?.sections || [],
-                  }
-                : null;
-
-            await db.from('messages').insert({
-              conversation_id: conversation.id,
-              sender_type: 'agent',
-              content_type:
-                messageType === 'template'
-                  ? 'template'
-                  : messageType === 'buttons' || messageType === 'list'
-                  ? 'interactive'
-                  : mediaUrl
-                  ? mediaKind
-                  : 'text',
-              content_text: messageType === 'template' ? templateRenderedBody : personalizedText,
-              interactive_payload: interactivePayload,
-              media_url: mediaUrl || null,
-              message_id: sentMsgId || `camp_${Date.now()}_${i}`,
-              status: 'sent',
-            });
-
-            await db
+          if (existingContact) {
+            let { data: conversation } = await db
               .from('conversations')
-              .update({
-                last_message_at: new Date().toISOString(),
-                last_message_text:
+              .select('id')
+              .eq('account_id', accountId)
+              .eq('contact_id', existingContact.id)
+              .maybeSingle();
+
+            if (!conversation) {
+              const { data: createdConv } = await db
+                .from('conversations')
+                .insert({
+                  user_id: userId,
+                  account_id: accountId,
+                  contact_id: existingContact.id,
+                  status: 'open',
+                  last_message_at: new Date().toISOString(),
+                })
+                .select('id')
+                .single();
+              conversation = createdConv;
+            }
+
+            if (conversation) {
+              const interactivePayload =
+                messageType === 'buttons'
+                  ? {
+                      kind: 'buttons',
+                      body: personalizedText,
+                      header: headerText || null,
+                      footer: footerText || null,
+                      buttons: buttons || [],
+                    }
+                  : messageType === 'list'
+                  ? {
+                      kind: 'list',
+                      body: personalizedText,
+                      header: headerText || null,
+                      footer: footerText || null,
+                      button_label: listConfig?.buttonLabel || 'Menu',
+                      sections: listConfig?.sections || [],
+                    }
+                  : null;
+
+              await db.from('messages').insert({
+                conversation_id: conversation.id,
+                sender_type: 'agent',
+                content_type:
                   messageType === 'template'
-                    ? `[Template: ${templateName}] ${(templateRenderedBody || '').slice(0, 40)}...`
-                    : messageType === 'buttons'
-                    ? `[Buttons] ${personalizedText.slice(0, 30)}...`
-                    : messageType === 'list'
-                    ? `[List] ${personalizedText.slice(0, 30)}...`
-                    : personalizedText.slice(0, 50),
-              })
-              .eq('id', conversation.id);
+                    ? 'template'
+                    : messageType === 'buttons' || messageType === 'list'
+                    ? 'interactive'
+                    : mediaUrl
+                    ? mediaKind
+                    : 'text',
+                content_text: messageType === 'template' ? templateRenderedBody : personalizedText,
+                interactive_payload: interactivePayload,
+                media_url: mediaUrl || null,
+                message_id: sentMsgId || `camp_${Date.now()}_${i}`,
+                status: 'sent',
+              });
+
+              await db
+                .from('conversations')
+                .update({
+                  last_message_at: new Date().toISOString(),
+                  last_message_text:
+                    messageType === 'template'
+                      ? `[Template: ${templateName}] ${(templateRenderedBody || '').slice(0, 40)}...`
+                      : messageType === 'buttons'
+                      ? `[Buttons] ${personalizedText.slice(0, 30)}...`
+                      : messageType === 'list'
+                      ? `[List] ${personalizedText.slice(0, 30)}...`
+                      : personalizedText.slice(0, 50),
+                })
+                .eq('id', conversation.id);
+            }
           }
+        }
+
+        if (!sentMsgId) {
+          throw new Error('Message dispatch failed to return a message ID from provider');
         }
 
         results.push({
@@ -552,6 +571,13 @@ export async function POST(request: Request) {
         ) {
           errorMsg =
             'Meta 24-hr Policy: WhatsApp requires an Approved Template to message new customers. Select "Meta Approved Template" above (e.g. welcome_greeting) or link your phone via QR.';
+        } else if (
+          errorMsg.includes('130429') ||
+          errorMsg.includes('Rate limit') ||
+          errorMsg.includes('too many messages')
+        ) {
+          errorMsg =
+            'Meta Rate Limit / Billing (130429): WhatsApp requires a verified payment card in Meta Business Suite to message new numbers, or scan your WhatsApp QR code to send freely.';
         }
         results.push({
           phone: cleanPhone,
