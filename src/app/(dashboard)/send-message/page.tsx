@@ -209,6 +209,8 @@ export default function SendMessagePage() {
   const [instances, setInstances] = useState<any[]>([]);
   const [isBaileysConnected, setIsBaileysConnected] = useState(false);
   const [linkedPhoneNumber, setLinkedPhoneNumber] = useState('');
+  const [isMetaConnected, setIsMetaConnected] = useState(false);
+  const [metaPhoneNumber, setMetaPhoneNumber] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
 
   // Dialogs State
@@ -231,28 +233,44 @@ export default function SendMessagePage() {
   const csvFileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Fetch Baileys instances
+  // Fetch Baileys & Meta Channel status
   async function fetchInstances() {
     try {
-      const res = await fetch('/api/whatsapp/baileys');
-      const data = await res.json();
-      if (data.sessions && Array.isArray(data.sessions)) {
-        setInstances(data.sessions);
-        const active = data.sessions.find((s: any) => s.status === 'connected');
-        if (active) {
+      const [baileysRes, healthRes] = await Promise.allSettled([
+        fetch('/api/whatsapp/baileys'),
+        fetch('/api/whatsapp/health'),
+      ]);
+
+      if (baileysRes.status === 'fulfilled') {
+        const data = await baileysRes.value.json();
+        if (data.sessions && Array.isArray(data.sessions)) {
+          setInstances(data.sessions);
+          const active = data.sessions.find((s: any) => s.status === 'connected');
+          if (active) {
+            setIsBaileysConnected(true);
+            setLinkedPhoneNumber(active.phoneNumber || 'Linked WhatsApp');
+          } else {
+            setIsBaileysConnected(false);
+          }
+        } else if (data.status === 'connected') {
           setIsBaileysConnected(true);
-          setLinkedPhoneNumber(active.phoneNumber || 'Linked WhatsApp');
+          setLinkedPhoneNumber(data.phoneNumber || 'Linked WhatsApp');
         } else {
           setIsBaileysConnected(false);
         }
-      } else if (data.status === 'connected') {
-        setIsBaileysConnected(true);
-        setLinkedPhoneNumber(data.phoneNumber || 'Linked WhatsApp');
-      } else {
-        setIsBaileysConnected(false);
+      }
+
+      if (healthRes.status === 'fulfilled') {
+        const healthData = await healthRes.value.json();
+        if (healthData.state === 'connected') {
+          setIsMetaConnected(true);
+          setMetaPhoneNumber(healthData.displayPhoneNumber || '+91 80010 80776');
+        } else {
+          setIsMetaConnected(false);
+        }
       }
     } catch {
-      setIsBaileysConnected(false);
+      // ignore
     }
   }
 
@@ -747,12 +765,17 @@ export default function SendMessagePage() {
           </div>
         </div>
 
-        {/* Device Status Banner */}
-        <div className="flex items-center gap-3">
+        {/* Device & Channel Status Banner */}
+        <div className="flex flex-wrap items-center gap-2">
           {isBaileysConnected ? (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Linked Device: {linkedPhoneNumber}</span>
+              <span>Linked WhatsApp: {linkedPhoneNumber}</span>
+            </div>
+          ) : isMetaConnected ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Meta Cloud API: {metaPhoneNumber} (Active)</span>
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -769,6 +792,12 @@ export default function SendMessagePage() {
                 <QrCode className="w-4 h-4" />
                 Link WhatsApp (QR Scan)
               </Button>
+            </div>
+          )}
+
+          {isBaileysConnected && isMetaConnected && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/20 text-primary text-[11px]">
+              <span>Meta Cloud Also Active</span>
             </div>
           )}
         </div>
@@ -825,11 +854,19 @@ export default function SendMessagePage() {
                 <SelectValue placeholder="Select channel" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="auto">Auto (Linked Device / High Speed)</SelectItem>
+                <SelectItem value="auto">
+                  {isBaileysConnected
+                    ? `Auto (Linked WhatsApp: ${linkedPhoneNumber})`
+                    : isMetaConnected
+                    ? `Auto (Meta Cloud API: ${metaPhoneNumber})`
+                    : 'Auto (Recommended)'}
+                </SelectItem>
+                <SelectItem value="meta">
+                  {isMetaConnected ? `Meta Cloud API (${metaPhoneNumber})` : 'Meta Cloud API (Official Cloud)'}
+                </SelectItem>
                 <SelectItem value="baileys">
                   {isBaileysConnected ? `Linked WhatsApp (${linkedPhoneNumber})` : 'Linked WhatsApp Web (QR)'}
                 </SelectItem>
-                <SelectItem value="meta">Meta Cloud API (Official Cloud)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1644,7 +1681,11 @@ export default function SendMessagePage() {
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">CHANNEL:</span>
               <strong className="text-foreground font-mono">
-                {isBaileysConnected ? 'Linked Device' : 'Meta API'}
+                {isBaileysConnected
+                  ? `Linked WhatsApp (${linkedPhoneNumber})`
+                  : isMetaConnected
+                  ? `Meta Cloud (${metaPhoneNumber})`
+                  : 'Ready'}
               </strong>
             </div>
           </div>

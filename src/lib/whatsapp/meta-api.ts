@@ -9,6 +9,11 @@
  * instead of a runtime rejection from Meta.
  */
 
+import dns from 'node:dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import { isBusinessScopedUserId } from './wa-identity'
 import { getT } from '@/lib/i18n/translate'
 

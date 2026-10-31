@@ -1,3 +1,8 @@
+import dns from 'node:dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/account';
 import { getBaileysSession, sendBaileysMessage } from '@/lib/whatsapp/baileys-service';
@@ -29,6 +34,14 @@ interface CampaignListSection {
 interface CampaignListConfig {
   buttonLabel: string;
   sections: CampaignListSection[];
+}
+
+function detectMediaKind(url?: string): 'image' | 'document' | 'video' {
+  if (!url) return 'image';
+  const lower = url.toLowerCase();
+  if (lower.includes('.pdf') || lower.includes('.doc') || lower.includes('.txt')) return 'document';
+  if (lower.match(/\.(mp4|mov|avi|mkv|webm)$/i)) return 'video';
+  return 'image';
 }
 
 function formatBaileysButtons(
@@ -125,16 +138,53 @@ export async function POST(request: Request) {
     const baileysSession = getBaileysSession(accountId, sessionId);
     const isBaileysConnected = baileysSession.status === 'connected';
 
-    const useBaileys = instance === 'baileys' || (instance === 'auto' && isBaileysConnected);
+    // Check Meta configuration
+    const { data: metaConfig } = await db
+      .from('whatsapp_config')
+      .select('phone_number_id, status')
+      .eq('account_id', accountId)
+      .maybeSingle();
 
-    if (instance === 'baileys' && !isBaileysConnected) {
-      return NextResponse.json(
-        {
-          error:
-            'Linked WhatsApp device is not connected. Please scan QR code in Settings > WhatsApp to connect.',
-        },
-        { status: 400 }
-      );
+    const hasMeta = !!(metaConfig && metaConfig.phone_number_id);
+
+    let useBaileys = false;
+    if (instance === 'baileys') {
+      if (!isBaileysConnected) {
+        return NextResponse.json(
+          {
+            error:
+              'Linked WhatsApp device is not connected. Please scan QR code in Settings > WhatsApp to connect.',
+          },
+          { status: 400 }
+        );
+      }
+      useBaileys = true;
+    } else if (instance === 'meta') {
+      if (!hasMeta) {
+        return NextResponse.json(
+          {
+            error:
+              'Meta Cloud API is not configured. Please set up your Meta WhatsApp credentials in Settings.',
+          },
+          { status: 400 }
+        );
+      }
+      useBaileys = false;
+    } else {
+      // auto mode: prefer baileys if connected, otherwise fallback to Meta if configured
+      if (isBaileysConnected) {
+        useBaileys = true;
+      } else if (hasMeta) {
+        useBaileys = false;
+      } else {
+        return NextResponse.json(
+          {
+            error:
+              'No active WhatsApp connection found. Please scan the QR code to link your phone (Baileys) or connect Meta Cloud API in Settings.',
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // Create a broadcast campaign record to track results
@@ -173,11 +223,12 @@ export async function POST(request: Request) {
 
     let sentCount = 0;
     let failedCount = 0;
+    const mediaKind = detectMediaKind(mediaUrl);
 
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i];
       const rawPhone = String(r.phone || '').trim();
-      const cleanPhone = rawPhone.replace(/\D/g, '');
+      let cleanPhone = rawPhone.replace(/\D/g, '');
 
       if (!cleanPhone || cleanPhone.length < 10) {
         results.push({
@@ -188,6 +239,11 @@ export async function POST(request: Request) {
         });
         failedCount++;
         continue;
+      }
+
+      // Automatically prepend India country code (91) if user entered a 10-digit mobile number
+      if (cleanPhone.length === 10) {
+        cleanPhone = `91${cleanPhone}`;
       }
 
       // Interpolate dynamic tags
@@ -244,7 +300,7 @@ export async function POST(request: Request) {
               .insert({
                 account_id: accountId,
                 phone: cleanPhone,
-                name: r.name || `User ${cleanPhone.slice(-4)}`,
+                name: r.name || `Customer ${cleanPhone.slice(-4)}`,
               })
               .select('id')
               .single();
@@ -280,10 +336,12 @@ export async function POST(request: Request) {
                   body: personalizedText,
                   header: headerText || undefined,
                   footer: footerText || undefined,
-                  buttons: ((buttons as CampaignButton[]) || []).map((b: CampaignButton, idx: number) => ({
-                    id: b.id || `btn_${idx + 1}`,
-                    title: (b.title || '').slice(0, 20),
-                  })),
+                  buttons: ((buttons as CampaignButton[]) || []).map(
+                    (b: CampaignButton, idx: number) => ({
+                      id: b.id || `btn_${idx + 1}`,
+                      title: (b.title || '').slice(0, 20),
+                    })
+                  ),
                 };
               } else if (messageType === 'list') {
                 interactivePayload = {
@@ -302,7 +360,7 @@ export async function POST(request: Request) {
                   messageType === 'buttons' || messageType === 'list'
                     ? 'interactive'
                     : mediaUrl
-                    ? 'image'
+                    ? mediaKind
                     : 'text',
                 contentText: personalizedText,
                 mediaUrl: mediaUrl || undefined,
@@ -384,7 +442,7 @@ export async function POST(request: Request) {
                 messageType === 'buttons' || messageType === 'list'
                   ? 'interactive'
                   : mediaUrl
-                  ? 'image'
+                  ? mediaKind
                   : 'text',
               content_text: personalizedText,
               interactive_payload: interactivePayload,

@@ -19,6 +19,11 @@
 // without duplicating ~250 lines of Meta plumbing.
 // ============================================================
 
+import dns from 'node:dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
