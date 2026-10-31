@@ -27,6 +27,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  QrCode,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -38,6 +39,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { WhatsAppQrLinker } from "@/components/settings/whatsapp-qr-linker";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
@@ -290,6 +299,7 @@ export function MessageThread({
 
   // Check if Baileys (linked WhatsApp web session) is active
   const [isBaileysActive, setIsBaileysActive] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/whatsapp/baileys")
@@ -1059,6 +1069,19 @@ export function MessageThread({
             <Clock className="h-3 w-3" />
             {sessionInfo.remaining}
           </Badge>
+          {!sessionInfo.isBaileys && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowQrModal(true)}
+              className="h-6 gap-1 px-2 text-[10px] border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 ml-1.5"
+              title="Link WhatsApp via QR code to send messages freely without Meta restrictions"
+            >
+              <QrCode className="h-3 w-3" />
+              Link QR
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1282,6 +1305,7 @@ export function MessageThread({
                           onOpenMedia={handleMediaChange}
                           contactPhone={contact?.phone}
                           onOpenTemplates={handleOpenTemplates}
+                          onOpenQrModal={() => setShowQrModal(true)}
                         />
                       </MessageActions>
                     );
@@ -1318,6 +1342,7 @@ export function MessageThread({
         onSendMedia={handleSendMedia}
         onSendInteractive={handleSendInteractive}
         onOpenTemplates={handleOpenTemplates}
+        onOpenQrModal={() => setShowQrModal(true)}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
       />
@@ -1327,6 +1352,24 @@ export function MessageThread({
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
       />
+
+      {/* QR Code Linker Modal */}
+      <Dialog open={showQrModal} onOpenChange={setShowQrModal}>
+        <DialogContent className="max-w-2xl bg-zinc-950 border-zinc-800 text-zinc-100 p-6">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-zinc-100">
+              <QrCode className="w-5 h-5 text-emerald-400" />
+              Link WhatsApp Web (Bypass Meta Rate Limits)
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-xs">
+              Scan the QR code with WhatsApp on your phone (Settings &gt; Linked Devices &gt; Link a Device) to send messages freely to any customer without Meta Cloud API restrictions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <WhatsAppQrLinker />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Full-size viewer for the thread's images/videos. Renders nothing
           until a bubble opens it. */}

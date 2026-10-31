@@ -27,6 +27,7 @@ import {
   Unlock,
   ExternalLink,
   Clock,
+  QrCode,
 } from "lucide-react";
 import { SendProductDialog } from "@/components/products/send-product-dialog";
 import { Button } from "@/components/ui/button";
@@ -123,6 +124,7 @@ interface MessageComposerProps {
   onSendMedia: (payload: SendMediaPayload) => void;
   onSendInteractive: (payload: InteractiveMessagePayload, replyToId?: string) => void;
   onOpenTemplates: () => void;
+  onOpenQrModal?: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
 }
@@ -146,6 +148,7 @@ export function MessageComposer({
   onSendMedia,
   onSendInteractive,
   onOpenTemplates,
+  onOpenQrModal,
   replyTo,
   onClearReply,
 }: MessageComposerProps) {
@@ -603,6 +606,19 @@ export function MessageComposer({
                 >
                   <ExternalLink className="h-3 w-3" />
                   Chat on WhatsApp Web
+                </Button>
+              )}
+              {onOpenQrModal && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 gap-1"
+                  onClick={onOpenQrModal}
+                  title="Link your phone to send messages without Meta 24h & rate limits"
+                >
+                  <QrCode className="h-3 w-3" />
+                  Link Phone (QR)
                 </Button>
               )}
               <Button

@@ -21,6 +21,8 @@ import {
   Phone,
   Copy,
   AlertTriangle,
+  AlertCircle,
+  QrCode,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -57,6 +59,7 @@ interface MessageBubbleProps {
   onOpenMedia?: (messageId: string) => void;
   contactPhone?: string | null;
   onOpenTemplates?: () => void;
+  onOpenQrModal?: () => void;
 }
 
 /**
@@ -383,6 +386,7 @@ export function MessageBubble({
   onOpenMedia,
   contactPhone,
   onOpenTemplates,
+  onOpenQrModal,
 }: MessageBubbleProps) {
   const t = useTranslations("Inbox.bubble");
 
@@ -396,6 +400,13 @@ export function MessageBubble({
     (message.error_code === 131047 ||
       Boolean(message.error_title?.toLowerCase().includes("re-engagement")) ||
       Boolean(message.error_details?.toLowerCase().includes("24 hours")));
+
+  const isRateLimited =
+    isAgent &&
+    message.status === "failed" &&
+    (message.error_code === 130429 ||
+      Boolean(message.error_title?.toLowerCase().includes("rate limit")) ||
+      Boolean(message.error_details?.toLowerCase().includes("too many messages")));
 
   // Row alignment + width cap are owned by <MessageActions> so its hover
   // group matches the bubble's content area, not the full row.
@@ -462,7 +473,66 @@ export function MessageBubble({
           {isAgent && <StatusIcon status={message.status} title={failure} />}
         </div>
       </div>
-      {is24hExpired ? (
+      {isRateLimited ? (
+        <div className="mt-2 max-w-sm rounded-xl border border-rose-500/30 bg-rose-950/20 p-2.5 text-xs text-rose-200 shadow-sm animate-in fade-in-0 duration-200">
+          <div className="flex items-center gap-1.5 font-medium text-rose-300">
+            <AlertCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+            <span>Meta Rate Limit Hit (Error 130429)</span>
+          </div>
+          <p className="mt-1 text-[11px] text-rose-200/80 leading-relaxed">
+            Meta Cloud API temporarily clamped sending due to burst volume or unverified tier. Send directly via WhatsApp Web (instant / 100% free) or link your phone via QR.
+          </p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {contactPhone && (
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                className="h-7 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] gap-1 px-2.5 shadow-sm font-medium"
+                onClick={() => {
+                  const clean = contactPhone.replace(/\D/g, "");
+                  const text = encodeURIComponent(message.content_text || "");
+                  window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${text}`, "_blank");
+                }}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Send via WhatsApp Web
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 border-rose-500/30 text-rose-300 hover:bg-rose-500/10 text-[11px] gap-1 px-2.5"
+              onClick={() => {
+                if (onOpenQrModal) {
+                  onOpenQrModal();
+                } else {
+                  window.location.href = "/settings?tab=whatsapp";
+                }
+              }}
+            >
+              <QrCode className="h-3 w-3" />
+              Scan QR (Link Phone)
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-zinc-300 hover:bg-white/10 text-[11px] gap-1 px-2"
+              onClick={() => {
+                if (message.content_text) {
+                  navigator.clipboard.writeText(message.content_text);
+                  toast.success("Message copied to clipboard");
+                }
+              }}
+            >
+              <Copy className="h-3 w-3" />
+              Copy
+            </Button>
+          </div>
+        </div>
+      ) : is24hExpired ? (
         <div className="mt-2 max-w-sm rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200 shadow-sm animate-in fade-in-0 duration-200">
           <div className="flex items-center gap-1.5 font-medium text-amber-300">
             <Clock className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -518,12 +588,30 @@ export function MessageBubble({
           </div>
         </div>
       ) : failure ? (
-        <p
-          className="mt-0.5 px-1 text-[10px] leading-tight text-muted-foreground"
-          title={failure}
-        >
-          {t("notDelivered")}: {failure}
-        </p>
+        <div className="mt-1 flex flex-col items-end gap-1">
+          <p
+            className="px-1 text-[10px] leading-tight text-red-400/90"
+            title={failure}
+          >
+            {t("notDelivered")}: {failure}
+          </p>
+          {contactPhone && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 text-[10px] border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 gap-1 px-2"
+              onClick={() => {
+                const clean = contactPhone.replace(/\D/g, "");
+                const text = encodeURIComponent(message.content_text || "");
+                window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${text}`, "_blank");
+              }}
+            >
+              <ExternalLink className="h-2.5 w-2.5" />
+              Send via WhatsApp Web
+            </Button>
+          )}
+        </div>
       ) : null}
       {reactions && reactions.length > 0 && onToggleReaction && (
         <MessageReactions
