@@ -1065,7 +1065,7 @@ export function SendProductDialog({
                   <span>Send Product via WhatsApp</span>
                   {isMultiProduct ? (
                     <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px] font-mono py-0 font-bold">
-                      🔥 {selectedProductsState.length} Products Combo
+                      🎠 {selectedProductsState.length} Products Carousel Showcase
                     </Badge>
                   ) : (
                     <Badge
@@ -1083,7 +1083,7 @@ export function SendProductDialog({
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
                   {isMultiProduct
-                    ? `Sharing ${selectedProductsState.length} selected products in a combined catalog showcase message.`
+                    ? `Sharing ${selectedProductsState.length} selected products in an interactive WhatsApp carousel showcase with swipeable cards and 1-tap buy buttons.`
                     : "Send product catalog card with photo, pricing, deal alert, and instant order buttons."}
                 </DialogDescription>
               </div>

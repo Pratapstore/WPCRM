@@ -3,8 +3,19 @@ import { requireRole } from '@/lib/auth/account';
 import { getBaileysSession, sendBaileysMessage } from '@/lib/whatsapp/baileys-service';
 import { sendMessageToConversation } from '@/lib/whatsapp/send-message';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
+import { formatProductCarouselWhatsAppMessage } from '@/lib/products/format-product-message';
 
 export const maxDuration = 300; // 5 minutes for bulk campaigns
+
+export interface CampaignCarouselCard {
+  id?: string;
+  image?: string;
+  title: string;
+  description?: string;
+  price?: number | string;
+  url?: string;
+  buttons?: Array<{ id: string; title: string; url?: string }>;
+}
 
 interface CampaignRecipient {
   phone: string;
@@ -104,7 +115,7 @@ export async function POST(request: Request) {
       campaignName = 'Quick Campaign',
       instance = 'auto', // 'baileys' | 'meta' | 'auto'
       sessionId = 'primary',
-      messageType = 'text', // 'template' | 'text' | 'media' | 'buttons' | 'list'
+      messageType = 'text', // 'template' | 'text' | 'media' | 'buttons' | 'list' | 'carousel'
       templateName = '',
       templateLanguage = 'en_US',
       messageText = '',
@@ -113,6 +124,7 @@ export async function POST(request: Request) {
       footerText = '',
       buttons = [] as CampaignButton[],
       listConfig,
+      carouselCards = [] as CampaignCarouselCard[],
       recipients = [] as CampaignRecipient[],
       delaySeconds = 1,
     } = body;
@@ -124,7 +136,20 @@ export async function POST(request: Request) {
       );
     }
 
-    if (messageType !== 'template' && !messageText && !mediaUrl) {
+    if (messageType === 'carousel') {
+      if (!Array.isArray(carouselCards) || carouselCards.length < 2) {
+        return NextResponse.json(
+          { error: 'Carousel messages require at least 2 product cards' },
+          { status: 400 }
+        );
+      }
+      if (carouselCards.length > 10) {
+        return NextResponse.json(
+          { error: 'WhatsApp limits carousel messages to a maximum of 10 cards' },
+          { status: 400 }
+        );
+      }
+    } else if (messageType !== 'template' && !messageText && !mediaUrl) {
       return NextResponse.json(
         { error: 'Message text or media is required' },
         { status: 400 }
@@ -293,6 +318,18 @@ export async function POST(request: Request) {
         templateRenderedBody = rendered;
       }
 
+      // Prepare carousel text and media if carousel message
+      const carouselFormattedText =
+        messageType === 'carousel' && Array.isArray(carouselCards) && carouselCards.length > 0
+          ? formatProductCarouselWhatsAppMessage(carouselCards, {
+              headerText: headerText || undefined,
+              bodyText: personalizedText || undefined,
+              footerText: footerText || undefined,
+            })
+          : '';
+      const effectiveMediaUrl =
+        mediaUrl || (messageType === 'carousel' ? carouselCards?.[0]?.image || undefined : undefined);
+
       try {
         let sentMsgId = '';
 
@@ -316,6 +353,8 @@ export async function POST(request: Request) {
           } else if (messageType === 'list') {
             textToSend = personalizedText;
             listToSend = listConfig;
+          } else if (messageType === 'carousel' && carouselFormattedText) {
+            textToSend = carouselFormattedText;
           }
 
           const res = await sendBaileysMessage(
@@ -327,7 +366,7 @@ export async function POST(request: Request) {
               footerText: footToSend,
               buttons: buttonsToSend,
               listConfig: listToSend,
-              mediaUrl: mediaUrl || undefined,
+              mediaUrl: effectiveMediaUrl,
               caption: textToSend,
             },
             sessionId
@@ -422,18 +461,26 @@ export async function POST(request: Request) {
                     button_label: (listConfig?.buttonLabel || 'View options').slice(0, 20),
                     sections: listConfig?.sections || [],
                   };
+                } else if (messageType === 'carousel') {
+                  interactivePayload = {
+                    kind: 'carousel',
+                    body: personalizedText,
+                    header: headerText || undefined,
+                    footer: footerText || undefined,
+                    cards: carouselCards || [],
+                  };
                 }
 
                 const res = await sendMessageToConversation(db, accountId, {
                   conversationId: conv.id,
                   messageType:
-                    messageType === 'buttons' || messageType === 'list'
+                    messageType === 'buttons' || messageType === 'list' || messageType === 'carousel'
                       ? 'interactive'
                       : mediaUrl
                       ? mediaKind
                       : 'text',
-                  contentText: personalizedText,
-                  mediaUrl: mediaUrl || undefined,
+                  contentText: messageType === 'carousel' ? carouselFormattedText : personalizedText,
+                  mediaUrl: effectiveMediaUrl,
                   interactivePayload,
                 });
                 sentMsgId = res.messageId;
@@ -507,6 +554,14 @@ export async function POST(request: Request) {
                       button_label: listConfig?.buttonLabel || 'Menu',
                       sections: listConfig?.sections || [],
                     }
+                  : messageType === 'carousel'
+                  ? {
+                      kind: 'carousel',
+                      body: personalizedText,
+                      header: headerText || null,
+                      footer: footerText || null,
+                      cards: carouselCards || [],
+                    }
                   : null;
 
               await db.from('messages').insert({
@@ -515,14 +570,19 @@ export async function POST(request: Request) {
                 content_type:
                   messageType === 'template'
                     ? 'template'
-                    : messageType === 'buttons' || messageType === 'list'
+                    : messageType === 'buttons' || messageType === 'list' || messageType === 'carousel'
                     ? 'interactive'
                     : mediaUrl
                     ? mediaKind
                     : 'text',
-                content_text: messageType === 'template' ? templateRenderedBody : personalizedText,
+                content_text:
+                  messageType === 'template'
+                    ? templateRenderedBody
+                    : messageType === 'carousel'
+                    ? carouselFormattedText
+                    : personalizedText,
                 interactive_payload: interactivePayload,
-                media_url: mediaUrl || null,
+                media_url: effectiveMediaUrl || null,
                 message_id: sentMsgId || `camp_${Date.now()}_${i}`,
                 status: 'sent',
               });
@@ -538,6 +598,8 @@ export async function POST(request: Request) {
                       ? `[Buttons] ${personalizedText.slice(0, 30)}...`
                       : messageType === 'list'
                       ? `[List] ${personalizedText.slice(0, 30)}...`
+                      : messageType === 'carousel'
+                      ? `[Carousel] ${(carouselCards?.length || 0)} Products Showcase`
                       : personalizedText.slice(0, 50),
                 })
                 .eq('id', conversation.id);

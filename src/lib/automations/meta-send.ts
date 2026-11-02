@@ -1,5 +1,6 @@
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
+import { formatProductCarouselWhatsAppMessage } from '@/lib/products/format-product-message'
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
@@ -104,13 +105,35 @@ export async function engineSendInteractive(
       buttons: payload.buttons,
     })
   }
-  return engineSendInteractiveList({
+  if (payload.kind === 'list') {
+    return engineSendInteractiveList({
+      ...common,
+      bodyText: payload.body,
+      buttonLabel: payload.button_label,
+      headerText: payload.header,
+      footerText: payload.footer,
+      sections: payload.sections,
+    })
+  }
+  // Carousel fallback
+  const text = formatProductCarouselWhatsAppMessage(
+    payload.cards.map((c) => ({
+      title: c.title,
+      description: c.description,
+      price: c.price,
+      image: c.image,
+      url: c.url,
+      buttons: c.buttons,
+    })),
+    {
+      headerText: payload.header,
+      bodyText: payload.body,
+      footerText: payload.footer,
+    }
+  )
+  return engineSendText({
     ...common,
-    bodyText: payload.body,
-    buttonLabel: payload.button_label,
-    headerText: payload.header,
-    footerText: payload.footer,
-    sections: payload.sections,
+    text,
   })
 }
 

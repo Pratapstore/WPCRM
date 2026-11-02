@@ -82,7 +82,7 @@ export function InteractiveBuilder({
 
   const switchKind = (kind: "buttons" | "list") => {
     if (kind === value.kind) return;
-    const shared = { body: value.body, header: value.header, footer: value.footer };
+    const shared = { body: value.body || "", header: value.header, footer: value.footer };
     onChange(
       kind === "buttons"
         ? { ...blankButtonsPayload(), ...shared }
@@ -151,10 +151,18 @@ export function InteractiveBuilder({
           </div>
 
           {value.kind === "buttons" ? (
-            <ButtonsEditor value={value} onChange={onChange} advanced={advanced} />
-          ) : (
-            <ListEditor value={value} onChange={onChange} advanced={advanced} />
-          )}
+            <ButtonsEditor
+              value={value}
+              onChange={(next) => onChange(next)}
+              advanced={advanced}
+            />
+          ) : value.kind === "list" ? (
+            <ListEditor
+              value={value}
+              onChange={(next) => onChange(next)}
+              advanced={advanced}
+            />
+          ) : null}
 
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input

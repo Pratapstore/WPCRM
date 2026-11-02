@@ -246,7 +246,25 @@ export async function POST(request: Request) {
             contentText: formattedCaption,
             mediaUrl: normalizedImageUrl || undefined,
             senderId: userId,
-            interactivePayload: includeButtons
+            interactivePayload: isMultiProduct
+              ? {
+                  kind: 'carousel',
+                  body: interactiveBody,
+                  footer: 'Pratap Store • Fast Pan-India Delivery',
+                  cards: orderedProducts.slice(0, 10).map((p) => ({
+                    id: p.id,
+                    title: p.name,
+                    description: p.description?.slice(0, 120) || `Category: ${p.category || 'Custom Gifts'}`,
+                    price: p.price,
+                    image: p.image_url || undefined,
+                    url: `https://${storeDomain}/products/${p.id}`,
+                    buttons: [
+                      { id: `order_${p.id}`, title: '🛍️ Order Now' },
+                      { id: `view_${p.id}`, title: '🔍 Details', url: `https://${storeDomain}/products/${p.id}` },
+                    ],
+                  })),
+                }
+              : includeButtons
               ? {
                   kind: 'buttons',
                   body: interactiveBody,

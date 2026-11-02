@@ -35,9 +35,12 @@ import {
   Layers,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   ExternalLink,
   Paperclip,
   Menu,
+  ShoppingBag,
+  Package,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -153,12 +156,21 @@ const PRESET_TEMPLATES = [
   },
 ];
 
+export interface CarouselCardItem {
+  id: string;
+  image: string;
+  title: string;
+  description: string;
+  price: string;
+  buttons: Array<{ id: string; title: string; url?: string; type?: 'quick_reply' | 'url' }>;
+}
+
 export default function SendMessagePage() {
   // Campaign State
   const [campaignName, setCampaignName] = useState(`Campaign ${new Date().toLocaleDateString('en-IN')}`);
   const [selectedTemplateId, setSelectedTemplateId] = useState('custom_text');
   const [selectedInstance, setSelectedInstance] = useState('auto');
-  const [messageType, setMessageType] = useState<'template' | 'buttons' | 'list' | 'text' | 'media'>('template');
+  const [messageType, setMessageType] = useState<'template' | 'buttons' | 'list' | 'text' | 'media' | 'carousel'>('template');
   
   // Meta Approved Templates State
   const [approvedTemplates, setApprovedTemplates] = useState<any[]>([]);
@@ -196,6 +208,48 @@ export default function SendMessagePage() {
       ],
     },
   ]);
+
+  // Carousel Cards State (2-10 cards)
+  const [carouselCards, setCarouselCards] = useState<CarouselCardItem[]>([
+    {
+      id: 'card_1',
+      image: 'https://edyxoahfaksulmifdgke.supabase.co/storage/v1/object/public/chat-media/account-842c3d98-69ad-4661-abe1-d53629a5bdb1/1793606561183-_Hindi_Sticker.png',
+      title: 'Custom Photo T-Shirt',
+      description: '100% Cotton with HD Durable Photo Print',
+      price: '399',
+      buttons: [
+        { id: 'order_card_1', title: '🛍️ Order Now', type: 'quick_reply' },
+        { id: 'view_card_1', title: '🌐 Website', url: 'https://pratapstore.in', type: 'url' },
+      ],
+    },
+    {
+      id: 'card_2',
+      image: '',
+      title: 'Magic Ceramic Photo Mug',
+      description: 'Reveals photo when hot coffee or tea is poured',
+      price: '299',
+      buttons: [
+        { id: 'order_card_2', title: '🛍️ Order Now', type: 'quick_reply' },
+        { id: 'view_card_2', title: '🌐 Website', url: 'https://pratapstore.in', type: 'url' },
+      ],
+    },
+    {
+      id: 'card_3',
+      image: '',
+      title: 'Laser Cut Photo Keychain',
+      description: 'Crystal clear acrylic with personalized picture',
+      price: '149',
+      buttons: [
+        { id: 'order_card_3', title: '🛍️ Order Now', type: 'quick_reply' },
+        { id: 'view_card_3', title: '💬 Customize', type: 'quick_reply' },
+      ],
+    },
+  ]);
+  const [showProductCatalogModal, setShowProductCatalogModal] = useState(false);
+  const [storeProductsList, setStoreProductsList] = useState<any[]>([]);
+  const [isLoadingStoreProducts, setIsLoadingStoreProducts] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [previewCardIdx, setPreviewCardIdx] = useState(0);
 
   // Phone Numbers State
   const [recipients, setRecipients] = useState<RecipientRow[]>([
@@ -459,6 +513,98 @@ export default function SendMessagePage() {
     setListSections(updated);
   }
 
+  // Carousel Operations
+  async function handleOpenStoreCatalogPicker() {
+    setShowProductCatalogModal(true);
+    if (storeProductsList.length === 0) {
+      setIsLoadingStoreProducts(true);
+      try {
+        const res = await fetch('/api/products');
+        if (res.ok) {
+          const data = await res.json();
+          setStoreProductsList(Array.isArray(data.products) ? data.products : []);
+        }
+      } catch (e) {
+        console.error('Failed to load products:', e);
+      } finally {
+        setIsLoadingStoreProducts(false);
+      }
+    }
+  }
+
+  function handleAddProductToCarousel(prod: any) {
+    if (carouselCards.length >= 10) {
+      toast.error('Maximum 10 carousel cards allowed');
+      return;
+    }
+    const newCard: CarouselCardItem = {
+      id: `card_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      image: prod.image_url || '',
+      title: prod.name?.slice(0, 35) || 'Store Product',
+      description: prod.description?.slice(0, 85) || `Category: ${prod.category || 'Custom Prints'}`,
+      price: String(prod.price || '299'),
+      buttons: [
+        { id: `order_${prod.id}`, title: '🛍️ Order Now', type: 'quick_reply' },
+        { id: `view_${prod.id}`, title: '🌐 View', url: `https://pratapstore.in/products/${prod.id}`, type: 'url' },
+      ],
+    };
+    setCarouselCards((prev) => [...prev, newCard]);
+    toast.success(`Added "${prod.name}" to carousel`);
+  }
+
+  function handleAddBlankCarouselCard() {
+    if (carouselCards.length >= 10) {
+      toast.error('Maximum 10 carousel cards allowed');
+      return;
+    }
+    const idx = carouselCards.length + 1;
+    setCarouselCards((prev) => [
+      ...prev,
+      {
+        id: `card_${Date.now()}`,
+        image: '',
+        title: `Product Card ${idx}`,
+        description: 'Personalized with your custom photo or text',
+        price: '349',
+        buttons: [
+          { id: `order_${idx}`, title: '🛍️ Order Now', type: 'quick_reply' },
+          { id: `view_${idx}`, title: '🌐 Details', url: 'https://pratapstore.in', type: 'url' },
+        ],
+      },
+    ]);
+  }
+
+  function handleUpdateCarouselCard(cardIdx: number, field: keyof CarouselCardItem, value: any) {
+    setCarouselCards((prev) => {
+      const copy = [...prev];
+      copy[cardIdx] = { ...copy[cardIdx], [field]: value };
+      return copy;
+    });
+  }
+
+  function handleDeleteCarouselCard(cardIdx: number) {
+    if (carouselCards.length <= 2) {
+      toast.error('WhatsApp carousel requires at least 2 cards');
+      return;
+    }
+    setCarouselCards((prev) => prev.filter((_, idx) => idx !== cardIdx));
+  }
+
+  function handleUpdateCardButton(cardIdx: number, btnIdx: number, field: 'title' | 'url', value: string) {
+    setCarouselCards((prev) => {
+      const copy = [...prev];
+      const card = { ...copy[cardIdx] };
+      const btns = [...(card.buttons || [])];
+      while (btns.length <= btnIdx) {
+        btns.push({ id: `btn_${btnIdx}`, title: 'Button', type: 'quick_reply' });
+      }
+      btns[btnIdx] = { ...btns[btnIdx], [field]: value };
+      card.buttons = btns;
+      copy[cardIdx] = card;
+      return copy;
+    });
+  }
+
   // Phone Numbers Operations
   function handleAddRow() {
     const newRow: RecipientRow = {
@@ -681,6 +827,24 @@ export default function SendMessagePage() {
       }
     }
 
+    if (messageType === 'carousel') {
+      if (carouselCards.length < 2) {
+        toast.error('WhatsApp Carousel requires at least 2 product cards (up to 10)');
+        return;
+      }
+      if (carouselCards.length > 10) {
+        toast.error('WhatsApp limits carousel messages to a maximum of 10 cards');
+        return;
+      }
+      for (let i = 0; i < carouselCards.length; i++) {
+        const c = carouselCards[i];
+        if (!c.title.trim()) {
+          toast.error(`Card #${i + 1} must have a product title`);
+          return;
+        }
+      }
+    }
+
     setIsSending(true);
     setShowProgressModal(true);
     setSendProgress({ current: 0, total: recipients.length, sent: 0, failed: 0 });
@@ -708,6 +872,7 @@ export default function SendMessagePage() {
                   sections: listSections,
                 }
               : undefined,
+          carouselCards: messageType === 'carousel' ? carouselCards : undefined,
           recipients: recipients.map((r) => ({
             phone: r.number,
             name: r.name,
@@ -910,7 +1075,7 @@ export default function SendMessagePage() {
               value={messageType}
               onValueChange={(val) =>
                 val &&
-                setMessageType(val as 'template' | 'text' | 'media' | 'buttons' | 'list')
+                setMessageType(val as 'template' | 'text' | 'media' | 'buttons' | 'list' | 'carousel')
               }
             >
               <SelectTrigger className="bg-background/50 h-9 font-medium">
@@ -919,6 +1084,9 @@ export default function SendMessagePage() {
               <SelectContent>
                 <SelectItem value="template">
                   ⭐ 📋 Meta Approved Template (100% Delivery to ANY New Customer)
+                </SelectItem>
+                <SelectItem value="carousel">
+                  🎠 🛍️ WhatsApp Product Carousel (Swipeable Showcase Cards)
                 </SelectItem>
                 <SelectItem value="buttons">🔘 Interactive Buttons (1–3 Quick Replies)</SelectItem>
                 <SelectItem value="list">📋 Interactive List Menu (Expandable Menu)</SelectItem>
@@ -1341,6 +1509,8 @@ export default function SendMessagePage() {
             <CardTitle className="text-base font-semibold">
               {messageType === 'template'
                 ? 'Meta Approved Template Selector'
+                : messageType === 'carousel'
+                ? 'WhatsApp Product Carousel Showcase Builder'
                 : messageType === 'buttons'
                 ? 'Interactive Button Message Builder'
                 : messageType === 'list'
@@ -1351,6 +1521,8 @@ export default function SendMessagePage() {
           <CardDescription className="text-xs">
             {messageType === 'template'
               ? 'WhatsApp guarantees 100% instant delivery for approved templates to ANY new customer, opening the 24-hour chat window.'
+              : messageType === 'carousel'
+              ? 'Build a multi-card swipeable showcase (2 to 10 cards) with product images, titles, prices, and 1-tap action buttons.'
               : messageType === 'buttons'
               ? 'Configure WhatsApp Quick Reply buttons (up to 3 buttons) that recipients can tap with 1 click.'
               : messageType === 'list'
@@ -1856,6 +2028,165 @@ export default function SendMessagePage() {
               </div>
             </div>
           )}
+
+          {/* CAROUSEL BUILDER (when messageType === 'carousel') */}
+          {messageType === 'carousel' && (
+            <div className="border border-border/50 rounded-xl p-4 bg-background/40 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/40">
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <span>Product Carousel Cards</span>
+                    <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+                      {carouselCards.length} / 10 Cards
+                    </Badge>
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Customers receive a multi-card swipeable carousel with photos, titles, prices, and 1-tap action buttons.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleOpenStoreCatalogPicker}
+                    className="h-7 text-xs gap-1.5 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5 text-emerald-400" />
+                    Pick from Store Catalog
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleAddBlankCarouselCard}
+                    disabled={carouselCards.length >= 10}
+                    className="h-7 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Card
+                  </Button>
+                </div>
+              </div>
+
+              {/* Cards List */}
+              <div className="space-y-3">
+                {carouselCards.map((card, cIdx) => (
+                  <div
+                    key={card.id || cIdx}
+                    className="p-3.5 rounded-xl bg-card border border-border/60 space-y-3 transition-all hover:border-border"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-bold">
+                          {cIdx + 1}
+                        </span>
+                        <span className="text-xs font-semibold text-foreground">
+                          Card #{cIdx + 1}: {card.title || 'Untitled Card'}
+                        </span>
+                        {card.price && (
+                          <Badge variant="secondary" className="text-[10px] text-emerald-400 bg-emerald-500/10 font-mono">
+                            ₹{card.price}
+                          </Badge>
+                        )}
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => handleDeleteCarouselCard(cIdx)}
+                        disabled={carouselCards.length <= 2}
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive cursor-pointer"
+                        title={carouselCards.length <= 2 ? 'Minimum 2 cards required' : 'Delete card'}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div className="sm:col-span-2">
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Product Title <span className="text-destructive">*</span>
+                        </label>
+                        <Input
+                          value={card.title}
+                          maxLength={40}
+                          onChange={(e) => handleUpdateCarouselCard(cIdx, 'title', e.target.value)}
+                          placeholder="e.g. Custom Photo T-Shirt"
+                          className="h-8 text-xs bg-background/50 font-medium"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Price (₹)
+                        </label>
+                        <Input
+                          value={card.price}
+                          onChange={(e) => handleUpdateCarouselCard(cIdx, 'price', e.target.value)}
+                          placeholder="e.g. 399"
+                          className="h-8 text-xs bg-background/50 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Description / Highlights
+                        </label>
+                        <Input
+                          value={card.description}
+                          maxLength={100}
+                          onChange={(e) => handleUpdateCarouselCard(cIdx, 'description', e.target.value)}
+                          placeholder="e.g. 100% Cotton with HD photo print"
+                          className="h-8 text-xs bg-background/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Image URL (Optional)
+                        </label>
+                        <Input
+                          value={card.image}
+                          onChange={(e) => handleUpdateCarouselCard(cIdx, 'image', e.target.value)}
+                          placeholder="https://... / image URL"
+                          className="h-8 text-xs bg-background/50 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Action Buttons for this card */}
+                    <div className="pt-2 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Button 1 (Quick Order)
+                        </label>
+                        <Input
+                          value={card.buttons?.[0]?.title || ''}
+                          maxLength={20}
+                          onChange={(e) => handleUpdateCardButton(cIdx, 0, 'title', e.target.value)}
+                          placeholder="Button 1 (e.g. 🛍️ Order Now)"
+                          className="h-7 text-xs bg-background/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground font-medium block mb-1">
+                          Button 2 Link URL (Details)
+                        </label>
+                        <Input
+                          value={card.buttons?.[1]?.url || ''}
+                          onChange={(e) => handleUpdateCardButton(cIdx, 1, 'url', e.target.value)}
+                          placeholder="https://pratapstore.in/..."
+                          className="h-7 text-xs bg-background/50 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
     </CardContent>
@@ -2094,6 +2425,127 @@ export default function SendMessagePage() {
                   : [];
               }
 
+              if (messageType === 'carousel') {
+                const currentCard = carouselCards[previewCardIdx] || carouselCards[0];
+                return (
+                  <div className="w-full space-y-2">
+                    {/* Introductory bubble if present */}
+                    {(displayHeader || displayBody) && (
+                      <div className="max-w-[90%] self-end bg-[#005c4b] text-white p-2.5 rounded-xl rounded-tr-none text-xs shadow-md space-y-1 ml-auto">
+                        {displayHeader && <div className="font-bold text-xs border-b border-white/10 pb-0.5">{displayHeader}</div>}
+                        {displayBody && <div className="whitespace-pre-wrap leading-relaxed">{displayBody}</div>}
+                        <div className="text-[9px] text-emerald-200 text-right pt-0.5">
+                          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ✓✓
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Interactive Carousel Card */}
+                    {currentCard && (
+                      <div className="w-full max-w-[280px] ml-auto rounded-xl overflow-hidden bg-[#1f2c34] border border-[#2a3942] shadow-xl text-white">
+                        {/* Media Window */}
+                        <div className="relative h-36 w-full bg-[#111b21] flex items-center justify-center overflow-hidden border-b border-[#2a3942]">
+                          {currentCard.image ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={currentCard.image}
+                              alt={currentCard.title}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center text-zinc-400 gap-1">
+                              <Package className="h-8 w-8 text-zinc-500" />
+                              <span className="text-[10px]">Product Image</span>
+                            </div>
+                          )}
+
+                          {currentCard.price && (
+                            <div className="absolute top-2 right-2 rounded-full bg-emerald-600 text-white px-2 py-0.5 text-[10px] font-bold shadow-md">
+                              ₹{currentCard.price}
+                            </div>
+                          )}
+
+                          <div className="absolute bottom-2 left-2 rounded-md bg-black/70 text-white px-1.5 py-0.5 text-[9px] font-medium backdrop-blur-xs">
+                            {previewCardIdx + 1} / {carouselCards.length}
+                          </div>
+
+                          {carouselCards.length > 1 && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewCardIdx((prev) => (prev > 0 ? prev - 1 : carouselCards.length - 1));
+                                }}
+                                className="absolute left-1.5 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center shadow z-10"
+                                title="Previous product"
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewCardIdx((prev) => (prev < carouselCards.length - 1 ? prev + 1 : 0));
+                                }}
+                                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center shadow z-10"
+                                title="Next product"
+                              >
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Title & Description */}
+                        <div className="p-2.5 space-y-1">
+                          <h4 className="font-semibold text-xs text-zinc-100 line-clamp-1">
+                            {currentCard.title || 'Product Title'}
+                          </h4>
+                          {currentCard.description && (
+                            <p className="text-[11px] text-zinc-300 line-clamp-2 leading-relaxed">
+                              {currentCard.description}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Card Buttons */}
+                        {Array.isArray(currentCard.buttons) && currentCard.buttons.length > 0 && (
+                          <div className="border-t border-[#2a3942] divide-y divide-[#2a3942]">
+                            {currentCard.buttons.map((btn, i) => (
+                              <div
+                                key={btn.id || i}
+                                className="flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-teal-400 bg-[#202c33] hover:bg-[#2a3942] cursor-pointer"
+                              >
+                                {btn.url ? <ExternalLink className="h-3 w-3" /> : <ShoppingBag className="h-3 w-3" />}
+                                <span className="truncate">{btn.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Dots indicator */}
+                        {carouselCards.length > 1 && (
+                          <div className="flex items-center justify-center gap-1 py-1.5 bg-[#172128] border-t border-[#2a3942]">
+                            {carouselCards.map((_, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => setPreviewCardIdx(i)}
+                                className={`h-1.5 rounded-full transition-all ${
+                                  i === previewCardIdx ? 'w-4 bg-teal-400' : 'w-1.5 bg-zinc-600 hover:bg-zinc-400'
+                                }`}
+                                aria-label={`Card ${i + 1}`}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
               return (
                 <>
                   <div className="max-w-[90%] self-end bg-[#005c4b] text-white p-3 rounded-xl rounded-tr-none text-xs shadow-md space-y-2">
@@ -2310,6 +2762,117 @@ export default function SendMessagePage() {
             >
               Close
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Store Product Catalog Picker Modal for WhatsApp Carousel */}
+      <Dialog open={showProductCatalogModal} onOpenChange={setShowProductCatalogModal}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingBag className="w-5 h-5 text-primary" />
+              Pick Products for WhatsApp Carousel
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Select products from your Pratap Store catalog to quickly add them as interactive showcase cards ({carouselCards.length}/10 cards added).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2 py-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                placeholder="Search products by title, category, or SKU..."
+                className="pl-9 h-9 text-xs"
+              />
+            </div>
+            {catalogSearch && (
+              <Button size="sm" variant="ghost" onClick={() => setCatalogSearch('')} className="h-9 px-2 text-xs">
+                Clear
+              </Button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto pr-1 -mr-1 min-h-[300px] max-h-[420px]">
+            {isLoadingStoreProducts ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground">
+                <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+                <span className="text-xs">Loading store catalog...</span>
+              </div>
+            ) : storeProductsList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground">
+                <Package className="w-8 h-8 opacity-40" />
+                <span className="text-xs">No products found in catalog.</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {storeProductsList
+                  .filter((p) => {
+                    if (!catalogSearch) return true;
+                    const q = catalogSearch.toLowerCase();
+                    return (
+                      p.name?.toLowerCase().includes(q) ||
+                      p.category?.toLowerCase().includes(q) ||
+                      p.sku?.toLowerCase().includes(q) ||
+                      p.description?.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((prod) => {
+                    const isAlreadyAdded = carouselCards.some((c) => c.title === prod.name);
+                    return (
+                      <div
+                        key={prod.id || prod.sku}
+                        className="flex items-center gap-3 p-2.5 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors"
+                      >
+                        <div className="h-14 w-14 rounded-md overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border/40">
+                          {prod.image_url ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={prod.image_url} alt={prod.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <Package className="w-5 h-5 text-muted-foreground/60" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h5 className="font-semibold text-xs truncate text-foreground">{prod.name}</h5>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs font-bold text-emerald-500">₹{prod.price}</span>
+                            {prod.compare_at_price && (
+                              <span className="text-[11px] text-muted-foreground line-through">
+                                ₹{prod.compare_at_price}
+                              </span>
+                            )}
+                            {prod.category && (
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-normal">
+                                {prod.category}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={isAlreadyAdded ? 'secondary' : 'default'}
+                          disabled={carouselCards.length >= 10}
+                          onClick={() => handleAddProductToCarousel(prod)}
+                          className="h-8 text-xs shrink-0 gap-1 px-3"
+                        >
+                          <Plus className="w-3 h-3" />
+                          {isAlreadyAdded ? 'Add Again' : 'Add Card'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center justify-between sm:justify-between border-t border-border/40 pt-3">
+            <span className="text-xs text-muted-foreground">
+              {carouselCards.length} / 10 cards in carousel
+            </span>
+            <Button onClick={() => setShowProductCatalogModal(false)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

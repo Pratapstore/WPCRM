@@ -53,6 +53,7 @@ import {
   templateContentText,
   templateHeaderMediaUrl,
 } from '@/lib/whatsapp/template-body';
+import { formatProductCarouselWhatsAppMessage } from '@/lib/products/format-product-message';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -367,6 +368,7 @@ export async function sendMessageToConversation(
   }
 
   const attempt = async (phone: string): Promise<string> => {
+    let mediaToSend = mediaUrl;
     if (isBaileysActive) {
       let textToSend = contentText || '';
       let headerToSend: string | undefined = undefined;
@@ -385,6 +387,25 @@ export async function sendMessageToConversation(
             buttonLabel: interactivePayload.button_label,
             sections: interactivePayload.sections,
           };
+        } else if (interactivePayload.kind === 'carousel' && interactivePayload.cards?.length) {
+          textToSend = formatProductCarouselWhatsAppMessage(
+            interactivePayload.cards.map((c) => ({
+              title: c.title,
+              description: c.description,
+              price: c.price,
+              image: c.image,
+              url: c.url,
+              buttons: c.buttons,
+            })),
+            {
+              headerText: interactivePayload.header,
+              bodyText: interactivePayload.body,
+              footerText: interactivePayload.footer,
+            }
+          );
+          if (!mediaToSend) {
+            mediaToSend = interactivePayload.cards.find((c) => c.image)?.image || undefined;
+          }
         }
       } else if (messageType === 'template' && templateRow) {
         textToSend = templateRow.body_text || '';
@@ -406,7 +427,7 @@ export async function sendMessageToConversation(
         footerText: footerToSend,
         buttons: buttonsToSend,
         listConfig: listToSend,
-        mediaUrl: mediaUrl || undefined,
+        mediaUrl: mediaToSend || undefined,
         caption: textToSend || undefined,
         fileName: filename,
       });
@@ -455,18 +476,60 @@ export async function sendMessageToConversation(
         });
         return result.messageId;
       }
-      const result = await sendInteractiveList({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        bodyText: p.body,
-        buttonLabel: p.button_label,
-        headerText: p.header || undefined,
-        footerText: p.footer || undefined,
-        sections: p.sections,
-        contextMessageId,
-      });
-      return result.messageId;
+      if (p.kind === 'list') {
+        const result = await sendInteractiveList({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          bodyText: p.body,
+          buttonLabel: p.button_label,
+          headerText: p.header || undefined,
+          footerText: p.footer || undefined,
+          sections: p.sections,
+          contextMessageId,
+        });
+        return result.messageId;
+      }
+      if (p.kind === 'carousel') {
+        const carouselText = formatProductCarouselWhatsAppMessage(
+          p.cards.map((c) => ({
+            title: c.title,
+            description: c.description,
+            price: c.price,
+            image: c.image,
+            url: c.url,
+            buttons: c.buttons,
+          })),
+          {
+            headerText: p.header,
+            bodyText: p.body,
+            footerText: p.footer,
+          }
+        );
+
+        const topImage = p.cards.find((c) => c.image)?.image || mediaUrl;
+        if (topImage) {
+          const result = await sendMediaMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            kind: 'image',
+            link: topImage,
+            caption: carouselText.slice(0, 1024),
+            contextMessageId,
+          });
+          return result.messageId;
+        }
+
+        const result = await sendTextMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          text: carouselText,
+          contextMessageId,
+        });
+        return result.messageId;
+      }
     }
     const result = await sendTextMessage({
       phoneNumberId: config.phone_number_id,

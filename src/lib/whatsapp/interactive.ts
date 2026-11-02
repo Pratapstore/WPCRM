@@ -68,9 +68,37 @@ export interface InteractiveListPayload {
   sections: InteractiveListSection[]
 }
 
+export interface InteractiveCarouselCardButton {
+  id: string
+  title: string
+  url?: string
+  type?: 'quick_reply' | 'url' | 'call'
+}
+
+export interface InteractiveCarouselCard {
+  id: string
+  image?: string
+  title: string
+  description?: string
+  price?: number | string
+  currency?: string
+  url?: string
+  productId?: string
+  buttons?: InteractiveCarouselCardButton[]
+}
+
+export interface InteractiveCarouselPayload {
+  kind: 'carousel'
+  body: string
+  header?: string
+  footer?: string
+  cards: InteractiveCarouselCard[]
+}
+
 export type InteractiveMessagePayload =
   | InteractiveButtonsPayload
   | InteractiveListPayload
+  | InteractiveCarouselPayload
 
 export type InteractiveValidation =
   | { ok: true }
@@ -223,7 +251,24 @@ export function validateInteractivePayload(
     return ok()
   }
 
-  return fail('Interactive message must be reply buttons or a list.')
+  if (p.kind === 'carousel') {
+    const carousel = p as InteractiveCarouselPayload
+    if (!Array.isArray(carousel.cards) || carousel.cards.length < 2) {
+      return fail('A carousel requires at least 2 cards.')
+    }
+    if (carousel.cards.length > 10) {
+      return fail('A carousel allows at most 10 cards.')
+    }
+    for (let i = 0; i < carousel.cards.length; i++) {
+      const card = carousel.cards[i]
+      if (!card || typeof card.title !== 'string' || card.title.trim() === '') {
+        return fail(`Card #${i + 1} needs a title.`)
+      }
+    }
+    return ok()
+  }
+
+  return fail('Interactive message must be reply buttons, a list, or a carousel.')
 }
 
 /**
@@ -235,5 +280,7 @@ export function interactivePayloadPreviewText(
 ): string {
   const body = payload.body?.trim()
   if (body) return body
-  return payload.kind === 'buttons' ? '[buttons]' : '[list]'
+  if (payload.kind === 'buttons') return '[buttons]'
+  if (payload.kind === 'list') return '[list]'
+  return `[carousel: ${payload.cards?.length || 0} cards]`
 }

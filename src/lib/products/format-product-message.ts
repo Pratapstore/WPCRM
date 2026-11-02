@@ -230,3 +230,80 @@ export function formatMultiProductWhatsAppMessage(
   return parts.join('\n\n');
 }
 
+export interface CarouselCardFormatInput {
+  title: string;
+  description?: string;
+  price?: number | string;
+  image?: string;
+  url?: string;
+  buttons?: Array<{ id: string; title: string; url?: string }>;
+}
+
+/**
+ * Format a carousel cards showcase for WhatsApp delivery.
+ */
+export function formatProductCarouselWhatsAppMessage(
+  cards: CarouselCardFormatInput[],
+  options: {
+    headerText?: string;
+    bodyText?: string;
+    footerText?: string;
+    storeName?: string;
+  } = {}
+): string {
+  const parts: string[] = [];
+  const store = options.storeName || 'Pratap Store';
+
+  if (options.headerText?.trim()) {
+    parts.push(`*${options.headerText.trim()}*`);
+  }
+
+  if (options.bodyText?.trim()) {
+    parts.push(options.bodyText.trim());
+  } else {
+    parts.push(`✨ *Featured Products Showcase:*\n_Swipe through the items below or tap any option to order:_`);
+  }
+
+  const numIcons = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+
+  cards.forEach((card, idx) => {
+    const icon = numIcons[idx] || `[${idx + 1}]`;
+    const cardLines: string[] = [];
+    const priceStr = card.price ? ` — *₹${card.price}*` : '';
+    cardLines.push(`${icon} *${card.title.trim()}*${priceStr}`);
+
+    if (card.description?.trim()) {
+      cardLines.push(`   📝 _${card.description.trim()}_`);
+    }
+
+    if (card.image?.trim()) {
+      cardLines.push(`   🖼️ Photo: ${card.image.trim()}`);
+    }
+
+    if (card.url?.trim()) {
+      cardLines.push(`   🔗 Buy Link: ${card.url.trim()}`);
+    }
+
+    if (Array.isArray(card.buttons) && card.buttons.length > 0) {
+      const btnStrs = card.buttons.map((b) => (b.url ? `🌐 ${b.title}: ${b.url}` : `🔘 ${b.title}`));
+      cardLines.push(`   ⚡ ${btnStrs.join(' | ')}`);
+    }
+
+    parts.push(cardLines.join('\n'));
+  });
+
+  parts.push(
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `👉 *Reply with the product number or name to order!*\n` +
+    `💬 Chat with us anytime for personalized custom orders.`
+  );
+
+  if (options.footerText?.trim()) {
+    parts.push(`_${options.footerText.trim()}_`);
+  } else {
+    parts.push(`_${store} • Your Ideas, Our Prints!_`);
+  }
+
+  return parts.join('\n\n');
+}
+
