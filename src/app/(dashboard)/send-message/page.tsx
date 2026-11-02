@@ -1484,12 +1484,35 @@ export default function SendMessagePage() {
                     )}
 
                     {activeTmpl.status === 'APPROVED' ? (
-                      <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>
-                          <strong>Guaranteed 100% Delivery:</strong> Meta WhatsApp Cloud API accepts this template for all new phone numbers without 24h restrictions.
-                        </span>
-                      </div>
+                      isBaileysConnected ? (
+                        <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>
+                            <strong>100% Guaranteed Direct Delivery:</strong> WhatsApp is linked via QR! Messages will send directly from your phone with 0 Meta restrictions, 0 rate limits, and 0 fees.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 font-medium text-amber-300">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <span>Meta Approved Template</span>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setShowQrModal(true)}
+                              className="h-6 text-[11px] gap-1 px-2 border-primary/40 text-primary hover:bg-primary/10"
+                            >
+                              <QrCode className="h-3 w-3" />
+                              Link Phone (QR)
+                            </Button>
+                          </div>
+                          <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                            Meta Cloud API accepts this template for new customer outreach. If Meta throttles cold numbers (Error 130429) due to unverified billing, simply link your phone via <strong>WhatsApp QR</strong> for 100% unrestricted direct delivery.
+                          </p>
+                        </div>
+                      )
                     ) : (
                       <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
@@ -2210,13 +2233,14 @@ export default function SendMessagePage() {
             </div>
 
             {/* Results Table */}
-            <div className="border border-border/40 rounded-lg max-h-48 overflow-y-auto">
+            <div className="border border-border/40 rounded-lg max-h-56 overflow-y-auto">
               <table className="w-full text-xs text-left">
                 <thead className="bg-muted/40 sticky top-0 border-b border-border/40 text-muted-foreground">
                   <tr>
                     <th className="py-2 px-3">Phone</th>
                     <th className="py-2 px-3">Status</th>
                     <th className="py-2 px-3">Detail</th>
+                    <th className="py-2 px-3 text-right">Quick Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/20 font-mono">
@@ -2234,14 +2258,48 @@ export default function SendMessagePage() {
                           </Badge>
                         )}
                       </td>
-                      <td className="py-1.5 px-3 text-[11px] text-muted-foreground font-sans truncate max-w-[180px]">
+                      <td className="py-1.5 px-3 text-[11px] text-muted-foreground font-sans truncate max-w-[140px]">
                         {log.error || 'Delivered'}
+                      </td>
+                      <td className="py-1.5 px-3 text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[11px] gap-1 px-2 text-emerald-400 hover:bg-emerald-500/10"
+                          onClick={() => {
+                            const clean = log.phone.replace(/\D/g, '');
+                            const activeTmpl = approvedTemplates.find((t) => t.name === selectedMetaTemplateName);
+                            const text = encodeURIComponent(messageText || activeTmpl?.body_text || '');
+                            window.open(`https://web.whatsapp.com/send?phone=${clean}&text=${text}`, '_blank');
+                          }}
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Send via Web
+                        </Button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {!isBaileysConnected && (
+              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-200 text-[11px] flex items-center justify-between gap-2">
+                <span>Want 100% direct delivery without Meta restrictions? Link your phone via QR.</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setShowProgressModal(false);
+                    setShowQrModal(true);
+                  }}
+                  className="h-6 text-[11px] border-amber-500/40 text-amber-300 hover:bg-amber-500/20 shrink-0"
+                >
+                  <QrCode className="h-3 w-3 mr-1" />
+                  Link WhatsApp
+                </Button>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
