@@ -285,11 +285,14 @@ export default function SendMessagePage() {
       const data = await res.json();
       if (data.templates && Array.isArray(data.templates) && data.templates.length > 0) {
         setApprovedTemplates(data.templates);
-        const preferred =
-          data.templates.find((t: any) => t.name === 'welcome_greeting') ||
-          data.templates.find((t: any) => t.name === 'mainmenu') ||
-          data.templates[0];
-        setSelectedMetaTemplateName(preferred.name);
+        setSelectedMetaTemplateName((prev) => {
+          if (prev && data.templates.some((t: any) => t.name === prev)) return prev;
+          const preferred =
+            data.templates.find((t: any) => t.name === 'welcome_greeting') ||
+            data.templates.find((t: any) => t.name === 'mainmenu') ||
+            data.templates[0];
+          return preferred.name;
+        });
       }
     } catch {}
   }
@@ -1380,10 +1383,15 @@ export default function SendMessagePage() {
                   <SelectTrigger className="bg-background/50 h-10 font-medium">
                     <SelectValue placeholder="Choose a Meta template" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-[350px] overflow-y-auto">
                     {approvedTemplates.map((t) => (
                       <SelectItem key={t.id} value={t.name}>
-                        {t.name} • {t.category || 'Marketing'} ({t.language})
+                        <div className="flex items-center justify-between w-full gap-3 text-left">
+                          <span className="font-medium text-foreground">{t.name}</span>
+                          <span className="text-[11px] text-muted-foreground shrink-0">
+                            {t.status === 'APPROVED' ? '✓ Approved' : t.status === 'PENDING' ? '⏳ In Review' : '📝 Draft'} • {t.category || 'Marketing'}
+                          </span>
+                        </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1419,9 +1427,19 @@ export default function SendMessagePage() {
                         <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">
                           {activeTmpl.category || 'Marketing'}
                         </Badge>
-                        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                          ✓ APPROVED by Meta
-                        </Badge>
+                        {activeTmpl.status === 'APPROVED' ? (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                            ✓ APPROVED by Meta
+                          </Badge>
+                        ) : activeTmpl.status === 'PENDING' ? (
+                          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20">
+                            ⏳ In Meta Review
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/20">
+                            📝 Draft
+                          </Badge>
+                        )}
                       </div>
                       <span className="text-[11px] text-muted-foreground">
                         Language: {activeTmpl.language || 'en_US'}
@@ -1465,12 +1483,21 @@ export default function SendMessagePage() {
                       </div>
                     )}
 
-                    <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>
-                        <strong>Guaranteed 100% Delivery:</strong> Meta WhatsApp Cloud API accepts this template for all new phone numbers without 24h restrictions.
-                      </span>
-                    </div>
+                    {activeTmpl.status === 'APPROVED' ? (
+                      <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>
+                          <strong>Guaranteed 100% Delivery:</strong> Meta WhatsApp Cloud API accepts this template for all new phone numbers without 24h restrictions.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>
+                          <strong>Meta Review Pending:</strong> This template is currently in review by Meta. You can send it instantly using Linked WhatsApp (QR) or choose an approved template above.
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
