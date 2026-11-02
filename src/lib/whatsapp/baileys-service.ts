@@ -7,9 +7,6 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestWaWebVersion,
   Browsers,
-  proto,
-  generateWAMessageFromContent,
-  prepareWAMessageMedia,
   type WASocket,
   type ConnectionState,
   type WAMessage,
@@ -893,155 +890,8 @@ export async function sendBaileysMessage(
   const hasButtons = Array.isArray(content.buttons) && content.buttons.length > 0;
   const hasList = content.listConfig && Array.isArray(content.listConfig.sections) && content.listConfig.sections.length > 0;
 
-  // 1. Try sending native interactive button / list message first
-  if (hasButtons || hasList) {
-    try {
-      const nativeButtons: any[] = [];
-
-      if (hasButtons && content.buttons) {
-        for (let i = 0; i < content.buttons.length; i++) {
-          const b = content.buttons[i];
-          const label = (b.title || b.text || `Option ${i + 1}`).trim();
-          const btnId = b.id || `btn_${i + 1}`;
-
-          if (b.url) {
-            nativeButtons.push({
-              name: 'cta_url',
-              buttonParamsJson: JSON.stringify({
-                display_text: label,
-                url: b.url,
-                merchant_url: b.url,
-              }),
-            });
-          } else if (b.phone) {
-            nativeButtons.push({
-              name: 'cta_call',
-              buttonParamsJson: JSON.stringify({
-                display_text: label,
-                phone_number: b.phone,
-              }),
-            });
-          } else if (b.copyCode) {
-            nativeButtons.push({
-              name: 'cta_copy',
-              buttonParamsJson: JSON.stringify({
-                display_text: label,
-                id: btnId,
-                copy_code: b.copyCode,
-              }),
-            });
-          } else {
-            // quick_reply
-            nativeButtons.push({
-              name: 'quick_reply',
-              buttonParamsJson: JSON.stringify({
-                display_text: label,
-                id: btnId,
-              }),
-            });
-          }
-        }
-      }
-
-      if (hasList && content.listConfig?.sections) {
-        nativeButtons.push({
-          name: 'single_select',
-          buttonParamsJson: JSON.stringify({
-            title: content.listConfig.buttonLabel || content.listConfig.title || 'Select Option',
-            sections: content.listConfig.sections.map((sec) => ({
-              title: sec.title || '',
-              rows: (sec.rows || []).map((r) => ({
-                id: r.id || `row_${Math.random()}`,
-                title: r.title || '',
-                description: r.description || '',
-              })),
-            })),
-          }),
-        });
-      }
-
-      let headerObj: any = undefined;
-      if (content.mediaUrl) {
-        const urlLower = content.mediaUrl.toLowerCase();
-        const isPdf = urlLower.includes('.pdf') || content.mimetype === 'application/pdf';
-        const isVideo = urlLower.match(/\.(mp4|mov|avi|mkv|webm)$/i) || content.mimetype?.startsWith('video/');
-        const fileName = content.fileName || content.mediaUrl.split('/').pop()?.split('?')[0] || 'document.pdf';
-
-        try {
-          const mediaPayload = isPdf
-            ? { document: { url: content.mediaUrl }, mimetype: 'application/pdf', fileName }
-            : isVideo
-            ? { video: { url: content.mediaUrl } }
-            : { image: { url: content.mediaUrl } };
-
-          const uploadedMedia = await prepareWAMessageMedia(mediaPayload, {
-            upload: session.sock.waUploadToServer,
-          });
-
-          headerObj = {
-            title: content.headerText || '',
-            hasMediaAttachment: true,
-            ...uploadedMedia,
-          };
-        } catch (mediaErr) {
-          console.warn('[Baileys] Media header preparation for interactive message failed, using text header:', mediaErr);
-          if (content.headerText) {
-            headerObj = {
-              title: content.headerText,
-              hasMediaAttachment: false,
-            };
-          }
-        }
-      } else if (content.headerText) {
-        headerObj = {
-          title: content.headerText,
-          hasMediaAttachment: false,
-        };
-      }
-
-      const bodyText = (content.text || content.caption || ' ').trim();
-      const footerText = (content.footerText || '').trim();
-
-      const interactiveMsg = proto.Message.InteractiveMessage.create({
-        body: proto.Message.InteractiveMessage.Body.create({ text: bodyText }),
-        footer: footerText ? proto.Message.InteractiveMessage.Footer.create({ text: footerText }) : undefined,
-        header: headerObj ? proto.Message.InteractiveMessage.Header.create(headerObj) : undefined,
-        nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-          buttons: nativeButtons,
-        }),
-      });
-
-      const userJid = session.sock.user?.id || `${cleanDigits}@s.whatsapp.net`;
-      const waMessage = generateWAMessageFromContent(
-        jid,
-        {
-          viewOnceMessage: {
-            message: {
-              messageContextInfo: {
-                deviceListMetadata: {},
-                deviceListMetadataVersion: 2,
-              },
-              interactiveMessage: interactiveMsg,
-            },
-          },
-        },
-        { userJid }
-      );
-
-      await session.sock.relayMessage(jid, waMessage.message!, {
-        messageId: waMessage.key.id!,
-      });
-
-      return {
-        messageId: waMessage.key.id || `baileys_${Date.now()}`,
-      };
-    } catch (relayErr) {
-      console.warn('[Baileys] Native interactive button relay failed, falling back to standard message:', relayErr);
-    }
-  }
-
-  // 2. Standard sending (or fallback if nativeFlow relay failed)
-  const fallbackFormattedText = (hasButtons || hasList)
+  // Format rich content ensuring buttons, list, header and footer are formatted cleanly
+  const messageText = (hasButtons || hasList || content.headerText || content.footerText)
     ? formatFallbackInteractiveText(content)
     : (content.text || content.caption || '');
 
@@ -1057,22 +907,22 @@ export async function sendBaileysMessage(
         document: { url: content.mediaUrl },
         mimetype: 'application/pdf',
         fileName,
-        caption: fallbackFormattedText,
+        caption: messageText,
       });
     } else if (isVideo) {
       sentResult = await session.sock.sendMessage(jid, {
         video: { url: content.mediaUrl },
-        caption: fallbackFormattedText,
+        caption: messageText,
       });
     } else {
       sentResult = await session.sock.sendMessage(jid, {
         image: { url: content.mediaUrl },
-        caption: fallbackFormattedText,
+        caption: messageText,
       });
     }
   } else {
     sentResult = await session.sock.sendMessage(jid, {
-      text: fallbackFormattedText,
+      text: messageText,
     });
   }
 
