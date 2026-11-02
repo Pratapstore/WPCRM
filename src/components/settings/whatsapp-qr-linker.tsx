@@ -128,11 +128,10 @@ export function WhatsAppQrLinker() {
     };
   }, [fetchSession]);
 
-  // Polling ONLY when actively waiting for a QR scan or pairing code
+  // Polling when waiting for a QR scan or pairing code
   useEffect(() => {
     const isWaitingForScan =
-      isPairingActive &&
-      (session.status === 'qr_ready' || session.status === 'connecting');
+      session.status === 'qr_ready' || session.status === 'connecting' || isPairingActive;
 
     if (isWaitingForScan) {
       if (!pollTimerRef.current) {
@@ -146,7 +145,7 @@ export function WhatsAppQrLinker() {
               pollTimerRef.current = null;
             }
           }
-        }, 2500);
+        }, 2000);
       }
     } else {
       if (pollTimerRef.current) {
@@ -785,7 +784,7 @@ export function WhatsAppQrLinker() {
                       </p>
                     </div>
                     <Button
-                      onClick={() => handleStartQr(activePairSessionId, false)}
+                      onClick={() => handleStartQr(activePairSessionId, true)}
                       disabled={actionLoading}
                       className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
                     >

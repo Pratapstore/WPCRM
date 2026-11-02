@@ -107,7 +107,7 @@ function readSessionInfo(sessionDir: string): {
   if (fs.existsSync(credsFile)) {
     try {
       const creds = JSON.parse(fs.readFileSync(credsFile, 'utf-8'));
-      if (creds.registered) {
+      if (creds.registered || creds.me?.id) {
         hasRegisteredAuth = true;
       }
       if (creds.me?.id && !phoneNumber) {
@@ -392,7 +392,7 @@ export async function startBaileysSession(
     existing?.sock &&
     !existing.isTerminated &&
     (existing.state.status === 'connected' ||
-      (existing.state.status === 'qr_ready' && existing.state.qrCode))
+      (existing.state.status === 'qr_ready' && existing.state.qrCode && Date.now() - existing.state.updatedAt < 25000))
   ) {
     return existing.state;
   }
@@ -513,10 +513,12 @@ export async function startBaileysSession(
       if (sessionObj.isTerminated) return;
 
       const statusCode = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output?.statusCode;
-      const isRegistered = Boolean(sock.user?.id || authState.creds.registered);
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+      const isRestartRequired = statusCode === DisconnectReason.restartRequired || statusCode === 515;
+      const hasMe = Boolean(sock.user?.id || authState.creds.me?.id);
+      const isRegistered = Boolean(authState.creds.registered || hasMe);
 
-      console.log(`[Baileys] Connection closed for ${sessionKey}, status: ${statusCode}, registered: ${isRegistered}`);
+      console.log(`[Baileys] Connection closed for ${sessionKey}, status: ${statusCode}, isRestartRequired: ${isRestartRequired}, registered: ${isRegistered}, hasMe: ${hasMe}`);
 
       if (isLoggedOut) {
         state.status = 'disconnected';
@@ -531,6 +533,26 @@ export async function startBaileysSession(
         return;
       }
 
+      // WhatsApp signals restartRequired (515) IMMEDIATELY after a QR code is scanned or pairing code is confirmed!
+      // We MUST reconnect immediately so Baileys finishes the cryptographic handshake.
+      if (isRestartRequired || hasMe) {
+        console.log(`[Baileys] Reconnecting ${sessionKey} to finalize handshake (code: ${statusCode}, hasMe: ${hasMe})...`);
+        state.status = 'connecting';
+        state.lastError = 'Finalizing pairing with WhatsApp...';
+        state.updatedAt = Date.now();
+
+        if (sessionObj.reconnectTimer) clearTimeout(sessionObj.reconnectTimer);
+        sessionObj.reconnectTimer = setTimeout(() => {
+          if (!sessionObj.isTerminated) {
+            startBaileysSession(accountId, { sessionId, sessionName }).catch((err) => {
+              console.error('[Baileys] Post-scan restart failed:', err);
+            });
+          }
+        }, 1000);
+        return;
+      }
+
+      // If never registered and not restart required (e.g. initial QR timeout after 1-2 minutes)
       if (!isRegistered) {
         state.status = 'disconnected';
         state.lastError = 'QR Code session ended. Click Refresh QR Code to try again.';
@@ -553,7 +575,7 @@ export async function startBaileysSession(
             console.error('[Baileys] Reconnect failed:', err);
           });
         }
-      }, 5000);
+      }, 3000);
     } else if (connection === 'open') {
       console.log(`[Baileys] Connected successfully for ${sessionKey}`);
       state.status = 'connected';
@@ -639,7 +661,7 @@ export async function startBaileysSession(
   // Await first QR code or connection event (up to 3 seconds) before returning!
   // This guarantees the frontend receives the QR code on the very first POST response!
   await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => resolve(), 3000);
+    const timeout = setTimeout(() => resolve(), options?.usePairingCode ? 4500 : 3500);
     const interval = setInterval(() => {
       if (state.qrCode || state.status === 'connected' || state.pairingCode || state.status === 'disconnected') {
         clearInterval(interval);
