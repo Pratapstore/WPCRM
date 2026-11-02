@@ -178,7 +178,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   if (isBaileys) {
     if (input.kind === 'template') {
       const res = await sendBaileysMessage(input.accountId, sanitized, {
-        text: content_text || undefined,
+        text: content_text || templateRow?.body_text || undefined,
+        headerText: templateRow?.header_content || undefined,
+        footerText: templateRow?.footer_text || undefined,
+        buttons: Array.isArray(templateRow?.buttons) ? templateRow.buttons : undefined,
         mediaUrl: templateHeaderMediaUrl(templateRow) || undefined,
       })
       waMessageId = res.messageId
@@ -206,7 +209,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       if (hasBaileysSession(input.accountId)) {
         if (input.kind === 'template') {
           const res = await sendBaileysMessage(input.accountId, sanitized, {
-            text: content_text || undefined,
+            text: content_text || templateRow?.body_text || undefined,
+            headerText: templateRow?.header_content || undefined,
+            footerText: templateRow?.footer_text || undefined,
+            buttons: Array.isArray(templateRow?.buttons) ? templateRow.buttons : undefined,
             mediaUrl: templateHeaderMediaUrl(templateRow) || undefined,
           })
           waMessageId = res.messageId

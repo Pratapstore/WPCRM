@@ -369,35 +369,46 @@ export async function sendMessageToConversation(
   const attempt = async (phone: string): Promise<string> => {
     if (isBaileysActive) {
       let textToSend = contentText || '';
+      let headerToSend: string | undefined = undefined;
+      let footerToSend: string | undefined = undefined;
+      let buttonsToSend: any[] | undefined = undefined;
+      let listToSend: any | undefined = undefined;
+
       if (messageType === 'interactive' && interactivePayload) {
-        const parts: string[] = [];
-        if (interactivePayload.header) parts.push(`*${interactivePayload.header}*`);
-        if (interactivePayload.body) parts.push(interactivePayload.body);
+        textToSend = interactivePayload.body || '';
+        headerToSend = interactivePayload.header;
+        footerToSend = interactivePayload.footer;
         if (interactivePayload.kind === 'buttons' && interactivePayload.buttons?.length) {
-          const actionCards = interactivePayload.buttons
-            .map((b) => `🔘 *[ ${b.title} ]*`)
-            .join('\n');
-          parts.push(`━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions (Tap / Reply):*\n${actionCards}`);
+          buttonsToSend = interactivePayload.buttons;
         } else if (interactivePayload.kind === 'list' && interactivePayload.sections?.length) {
-          const listLines: string[] = [];
-          let count = 1;
-          for (const sec of interactivePayload.sections) {
-            if (sec.title) listLines.push(`\n📌 *${sec.title}*`);
-            for (const row of sec.rows) {
-              listLines.push(`${count}. *${row.title}*${row.description ? ` (${row.description})` : ''}`);
-              count++;
-            }
-          }
-          parts.push(listLines.join('\n'));
+          listToSend = {
+            buttonLabel: interactivePayload.button_label,
+            sections: interactivePayload.sections,
+          };
         }
-        if (interactivePayload.footer) parts.push(`_${interactivePayload.footer}_`);
-        textToSend = parts.join('\n\n');
+      } else if (messageType === 'template' && templateRow) {
+        textToSend = templateRow.body_text || '';
+        if (templateParams && templateParams.length > 0) {
+          templateParams.forEach((val, pIdx) => {
+            textToSend = textToSend.replace(new RegExp(`\\{\\{${pIdx + 1}\\}\\}`, 'g'), val);
+          });
+        }
+        headerToSend = templateRow.header_content;
+        footerToSend = templateRow.footer_text;
+        if (Array.isArray(templateRow.buttons) && templateRow.buttons.length > 0) {
+          buttonsToSend = templateRow.buttons;
+        }
       }
 
       const res = await sendBaileysMessage(accountId, phone, {
         text: textToSend || undefined,
+        headerText: headerToSend,
+        footerText: footerToSend,
+        buttons: buttonsToSend,
+        listConfig: listToSend,
         mediaUrl: mediaUrl || undefined,
         caption: textToSend || undefined,
+        fileName: filename,
       });
       return res.messageId;
     }

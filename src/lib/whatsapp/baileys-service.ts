@@ -7,6 +7,9 @@ import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestWaWebVersion,
   Browsers,
+  proto,
+  generateWAMessageFromContent,
+  prepareWAMessageMedia,
   type WASocket,
   type ConnectionState,
   type WAMessage,
@@ -781,13 +784,90 @@ export function cleanOrphanSessions(accountId: string): void {
   }
 }
 
+export interface SendBaileysButton {
+  id?: string;
+  title?: string;
+  text?: string;
+  url?: string;
+  phone?: string;
+  copyCode?: string;
+  type?: string;
+}
+
+export interface SendBaileysListSection {
+  title?: string;
+  rows: Array<{
+    id: string;
+    title: string;
+    description?: string;
+  }>;
+}
+
+export interface SendBaileysListConfig {
+  buttonLabel?: string;
+  title?: string;
+  sections?: SendBaileysListSection[];
+}
+
+export interface SendBaileysContent {
+  text?: string | null;
+  mediaUrl?: string | null;
+  caption?: string | null;
+  fileName?: string | null;
+  mimetype?: string | null;
+  headerText?: string | null;
+  footerText?: string | null;
+  buttons?: SendBaileysButton[];
+  listConfig?: SendBaileysListConfig;
+}
+
+function formatFallbackInteractiveText(content: SendBaileysContent): string {
+  const parts: string[] = [];
+  if (content.headerText?.trim()) {
+    parts.push(`*${content.headerText.trim()}*`);
+  }
+  const mainText = (content.text || content.caption || '').trim();
+  if (mainText) {
+    parts.push(mainText);
+  }
+  if (Array.isArray(content.buttons) && content.buttons.length > 0) {
+    const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    const buttonLines = content.buttons.map((b, idx) => {
+      const label = (b.title || b.text || `Option ${idx + 1}`).trim();
+      if (b.url) return `🌐 *${label}*: ${b.url}`;
+      if (b.phone) return `📞 *${label}*: ${b.phone}`;
+      const num = emojis[idx] || `[${idx + 1}]`;
+      return `${num} *${label}*`;
+    });
+    parts.push(`━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions:*\n${buttonLines.join('\n')}\n👉 _Reply with the number or button name_`);
+  } else if (content.listConfig && Array.isArray(content.listConfig.sections) && content.listConfig.sections.length > 0) {
+    const listLines: string[] = [];
+    let count = 1;
+    for (const sec of content.listConfig.sections) {
+      if (sec.title?.trim()) listLines.push(`\n📌 *${sec.title.trim()}*`);
+      for (const row of sec.rows || []) {
+        const desc = row.description?.trim() ? ` — ${row.description.trim()}` : '';
+        const num = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'][count - 1] || `[${count}]`;
+        listLines.push(`${num} *${row.title.trim()}*${desc}`);
+        count++;
+      }
+    }
+    const label = content.listConfig.buttonLabel || content.listConfig.title || 'Options';
+    parts.push(`━━━━━━━━━━━━━━━━━━━━\n📋 *${label}:*\n${listLines.join('\n')}\n👉 _Reply with option number or title_`);
+  }
+  if (content.footerText?.trim()) {
+    parts.push(`_${content.footerText.trim()}_`);
+  }
+  return parts.join('\n\n');
+}
+
 /**
- * Send a message using the active Baileys session
+ * Send a message using the active Baileys session (supports native interactive buttons & lists)
  */
 export async function sendBaileysMessage(
   accountId: string,
   toPhone: string,
-  content: { text?: string; mediaUrl?: string; caption?: string; fileName?: string; mimetype?: string },
+  content: SendBaileysContent,
   sessionId?: string
 ): Promise<{ messageId: string }> {
   let sessionKey = sessionId ? getSessionKey(accountId, sessionId) : null;
@@ -810,6 +890,161 @@ export async function sendBaileysMessage(
   const cleanDigits = toPhone.replace(/\D/g, '');
   const jid = `${cleanDigits}@s.whatsapp.net`;
 
+  const hasButtons = Array.isArray(content.buttons) && content.buttons.length > 0;
+  const hasList = content.listConfig && Array.isArray(content.listConfig.sections) && content.listConfig.sections.length > 0;
+
+  // 1. Try sending native interactive button / list message first
+  if (hasButtons || hasList) {
+    try {
+      const nativeButtons: any[] = [];
+
+      if (hasButtons && content.buttons) {
+        for (let i = 0; i < content.buttons.length; i++) {
+          const b = content.buttons[i];
+          const label = (b.title || b.text || `Option ${i + 1}`).trim();
+          const btnId = b.id || `btn_${i + 1}`;
+
+          if (b.url) {
+            nativeButtons.push({
+              name: 'cta_url',
+              buttonParamsJson: JSON.stringify({
+                display_text: label,
+                url: b.url,
+                merchant_url: b.url,
+              }),
+            });
+          } else if (b.phone) {
+            nativeButtons.push({
+              name: 'cta_call',
+              buttonParamsJson: JSON.stringify({
+                display_text: label,
+                phone_number: b.phone,
+              }),
+            });
+          } else if (b.copyCode) {
+            nativeButtons.push({
+              name: 'cta_copy',
+              buttonParamsJson: JSON.stringify({
+                display_text: label,
+                id: btnId,
+                copy_code: b.copyCode,
+              }),
+            });
+          } else {
+            // quick_reply
+            nativeButtons.push({
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                display_text: label,
+                id: btnId,
+              }),
+            });
+          }
+        }
+      }
+
+      if (hasList && content.listConfig?.sections) {
+        nativeButtons.push({
+          name: 'single_select',
+          buttonParamsJson: JSON.stringify({
+            title: content.listConfig.buttonLabel || content.listConfig.title || 'Select Option',
+            sections: content.listConfig.sections.map((sec) => ({
+              title: sec.title || '',
+              rows: (sec.rows || []).map((r) => ({
+                id: r.id || `row_${Math.random()}`,
+                title: r.title || '',
+                description: r.description || '',
+              })),
+            })),
+          }),
+        });
+      }
+
+      let headerObj: any = undefined;
+      if (content.mediaUrl) {
+        const urlLower = content.mediaUrl.toLowerCase();
+        const isPdf = urlLower.includes('.pdf') || content.mimetype === 'application/pdf';
+        const isVideo = urlLower.match(/\.(mp4|mov|avi|mkv|webm)$/i) || content.mimetype?.startsWith('video/');
+        const fileName = content.fileName || content.mediaUrl.split('/').pop()?.split('?')[0] || 'document.pdf';
+
+        try {
+          const mediaPayload = isPdf
+            ? { document: { url: content.mediaUrl }, mimetype: 'application/pdf', fileName }
+            : isVideo
+            ? { video: { url: content.mediaUrl } }
+            : { image: { url: content.mediaUrl } };
+
+          const uploadedMedia = await prepareWAMessageMedia(mediaPayload, {
+            upload: session.sock.waUploadToServer,
+          });
+
+          headerObj = {
+            title: content.headerText || '',
+            hasMediaAttachment: true,
+            ...uploadedMedia,
+          };
+        } catch (mediaErr) {
+          console.warn('[Baileys] Media header preparation for interactive message failed, using text header:', mediaErr);
+          if (content.headerText) {
+            headerObj = {
+              title: content.headerText,
+              hasMediaAttachment: false,
+            };
+          }
+        }
+      } else if (content.headerText) {
+        headerObj = {
+          title: content.headerText,
+          hasMediaAttachment: false,
+        };
+      }
+
+      const bodyText = (content.text || content.caption || ' ').trim();
+      const footerText = (content.footerText || '').trim();
+
+      const interactiveMsg = proto.Message.InteractiveMessage.create({
+        body: proto.Message.InteractiveMessage.Body.create({ text: bodyText }),
+        footer: footerText ? proto.Message.InteractiveMessage.Footer.create({ text: footerText }) : undefined,
+        header: headerObj ? proto.Message.InteractiveMessage.Header.create(headerObj) : undefined,
+        nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+          buttons: nativeButtons,
+        }),
+      });
+
+      const userJid = session.sock.user?.id || `${cleanDigits}@s.whatsapp.net`;
+      const waMessage = generateWAMessageFromContent(
+        jid,
+        {
+          viewOnceMessage: {
+            message: {
+              messageContextInfo: {
+                deviceListMetadata: {},
+                deviceListMetadataVersion: 2,
+              },
+              interactiveMessage: interactiveMsg,
+            },
+          },
+        },
+        { userJid }
+      );
+
+      await session.sock.relayMessage(jid, waMessage.message!, {
+        messageId: waMessage.key.id!,
+      });
+
+      return {
+        messageId: waMessage.key.id || `baileys_${Date.now()}`,
+      };
+    } catch (relayErr) {
+      console.warn('[Baileys] Native interactive button relay failed, falling back to standard message:', relayErr);
+    }
+  }
+
+  // 2. Standard sending (or fallback if nativeFlow relay failed)
+  const fallbackFormattedText = (hasButtons || hasList)
+    ? formatFallbackInteractiveText(content)
+    : (content.text || content.caption || '');
+
   let sentResult;
   if (content.mediaUrl) {
     const urlLower = content.mediaUrl.toLowerCase();
@@ -822,22 +1057,22 @@ export async function sendBaileysMessage(
         document: { url: content.mediaUrl },
         mimetype: 'application/pdf',
         fileName,
-        caption: content.caption || content.text || '',
+        caption: fallbackFormattedText,
       });
     } else if (isVideo) {
       sentResult = await session.sock.sendMessage(jid, {
         video: { url: content.mediaUrl },
-        caption: content.caption || content.text || '',
+        caption: fallbackFormattedText,
       });
     } else {
       sentResult = await session.sock.sendMessage(jid, {
         image: { url: content.mediaUrl },
-        caption: content.caption || content.text || '',
+        caption: fallbackFormattedText,
       });
     }
   } else {
     sentResult = await session.sock.sendMessage(jid, {
-      text: content.text || '',
+      text: fallbackFormattedText,
     });
   }
 
@@ -883,7 +1118,15 @@ async function handleInboundMessage(accountId: string, msg: WAMessage): Promise<
   const cleanPhone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
   const pushName = msg.pushName || 'WhatsApp Customer';
 
-  const messageContent = msg.message;
+  let rawContent = msg.message as any;
+  if (rawContent?.viewOnceMessage?.message) {
+    rawContent = rawContent.viewOnceMessage.message;
+  } else if (rawContent?.viewOnceMessageV2?.message) {
+    rawContent = rawContent.viewOnceMessageV2.message;
+  } else if (rawContent?.ephemeralMessage?.message) {
+    rawContent = rawContent.ephemeralMessage.message;
+  }
+  const messageContent = rawContent;
   const text =
     messageContent.conversation ||
     messageContent.extendedTextMessage?.text ||
@@ -986,6 +1229,12 @@ async function handleInboundMessage(accountId: string, msg: WAMessage): Promise<
   } else if (anyMsg.templateButtonReplyMessage?.selectedId) {
     interactiveReplyId = anyMsg.templateButtonReplyMessage.selectedId;
     replyTitle = anyMsg.templateButtonReplyMessage.selectedDisplayText || null;
+  } else if (anyMsg.interactiveResponseMessage?.nativeFlowResponseMessage) {
+    try {
+      const parsed = JSON.parse(anyMsg.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson || '{}');
+      interactiveReplyId = parsed.id || null;
+      replyTitle = parsed.title || parsed.display_text || null;
+    } catch {}
   }
 
   // 3. Insert Message

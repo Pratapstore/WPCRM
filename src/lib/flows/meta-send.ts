@@ -474,9 +474,18 @@ async function sendInteractiveViaMeta(
   }
 
   if (isBaileys) {
-    const formattedText = formatBaileysInteractiveText()
     const res = await sendBaileysMessage(input.accountId, sanitized, {
-      text: formattedText,
+      text: input.bodyText,
+      headerText: input.headerText,
+      footerText: input.footerText,
+      buttons: input.kind === 'buttons' ? input.buttons : undefined,
+      listConfig:
+        input.kind === 'list'
+          ? {
+              buttonLabel: input.buttonLabel,
+              sections: input.sections,
+            }
+          : undefined,
     })
     waMessageId = res.messageId
   } else {
@@ -485,9 +494,18 @@ async function sendInteractiveViaMeta(
       metaCreds = await loadAccountMetaCredentials(db, input.accountId)
     } catch (metaErr) {
       if (hasBaileysSession(input.accountId)) {
-        const formattedText = formatBaileysInteractiveText()
         const res = await sendBaileysMessage(input.accountId, sanitized, {
-          text: formattedText,
+          text: input.bodyText,
+          headerText: input.headerText,
+          footerText: input.footerText,
+          buttons: input.kind === 'buttons' ? input.buttons : undefined,
+          listConfig:
+            input.kind === 'list'
+              ? {
+                  buttonLabel: input.buttonLabel,
+                  sections: input.sections,
+                }
+              : undefined,
         })
         waMessageId = res.messageId
       } else {

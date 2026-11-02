@@ -298,33 +298,24 @@ export async function POST(request: Request) {
 
         if (useBaileys) {
           let textToSend = personalizedText;
+          let buttonsToSend: any[] | undefined = undefined;
+          let listToSend: any | undefined = undefined;
+          let headToSend: string | undefined = headerText || undefined;
+          let footToSend: string | undefined = footerText || undefined;
+
           if (messageType === 'template' && templateDbRow) {
-            const parts: string[] = [];
-            if (templateDbRow.header_content) parts.push(`*${templateDbRow.header_content}*`);
-            parts.push(templateRenderedBody);
-            if (templateDbRow.footer_text) parts.push(`_${templateDbRow.footer_text}_`);
+            textToSend = templateRenderedBody;
+            headToSend = templateDbRow.header_content || undefined;
+            footToSend = templateDbRow.footer_text || undefined;
             if (Array.isArray(templateDbRow.buttons) && templateDbRow.buttons.length > 0) {
-              const actionCards = templateDbRow.buttons.map(
-                (b: any) => `🔘 *[ ${b.text || b.title} ]*`
-              );
-              parts.push(`━━━━━━━━━━━━━━━━━━━━\n⚡ *Quick Actions:*\n${actionCards.join('\n')}`);
+              buttonsToSend = templateDbRow.buttons;
             }
-            textToSend = parts.join('\n\n');
           } else if (messageType === 'buttons') {
-            textToSend = formatBaileysButtons(
-              personalizedText,
-              headerText,
-              footerText,
-              buttons
-            );
+            textToSend = personalizedText;
+            buttonsToSend = buttons;
           } else if (messageType === 'list') {
-            textToSend = formatBaileysList(
-              personalizedText,
-              headerText,
-              footerText,
-              listConfig?.buttonLabel,
-              listConfig?.sections
-            );
+            textToSend = personalizedText;
+            listToSend = listConfig;
           }
 
           const res = await sendBaileysMessage(
@@ -332,6 +323,10 @@ export async function POST(request: Request) {
             cleanPhone,
             {
               text: textToSend,
+              headerText: headToSend,
+              footerText: footToSend,
+              buttons: buttonsToSend,
+              listConfig: listToSend,
               mediaUrl: mediaUrl || undefined,
               caption: textToSend,
             },
