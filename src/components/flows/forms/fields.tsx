@@ -125,25 +125,50 @@ export function NodeKeySelect({
 }) {
   const t = useTranslations("Flows.builder.form");
   const options = nodes.filter((n) => n.node_key !== excludeKey);
+  const selectedNode = options.find((n) => n.node_key === value);
+  const selectedType = selectedNode?.node_type;
+  const SelectedIcon = selectedType ? NODE_META[selectedType]?.icon : null;
+  const selectedColor = selectedType ? NODE_META[selectedType]?.color : null;
+
   return (
     <Select
       value={value ?? "__none__"}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
     >
-      <SelectTrigger className={cn("bg-muted", className)}>
-        <SelectValue placeholder={placeholder ?? "—"} />
+      <SelectTrigger
+        className={cn("bg-muted h-8 w-full min-w-0 text-xs px-2.5", className)}
+        title={value && value !== "__none__" ? value : undefined}
+      >
+        <SelectValue placeholder={placeholder ?? "—"}>
+          {value && value !== "__none__" ? (
+            <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full truncate text-xs">
+              {SelectedIcon && (
+                <SelectedIcon
+                  className={cn("h-3 w-3 shrink-0", selectedColor)}
+                />
+              )}
+              <span className="truncate">{value}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground italic truncate text-xs">
+              {t("none")}
+            </span>
+          )}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">{t("none")}</SelectItem>
+        <SelectItem value="__none__">
+          <span className="text-muted-foreground italic text-xs">{t("none")}</span>
+        </SelectItem>
         {options.map((n) => {
           const Icon = NODE_META[n.node_type].icon;
           return (
             <SelectItem key={n.node_key} value={n.node_key}>
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 min-w-0 text-xs">
                 <Icon
-                  className={cn("h-3 w-3", NODE_META[n.node_type].color)}
+                  className={cn("h-3 w-3 shrink-0", NODE_META[n.node_type].color)}
                 />
-                {n.node_key}
+                <span className="truncate">{n.node_key}</span>
               </span>
             </SelectItem>
           );

@@ -282,16 +282,11 @@ function SendButtonsForm({
             {t("buttonsHelp")}
           </label>
         </div>
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
           {buttons.map((b, i) => (
             <div
               key={i}
-              className={cn(
-                "grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/40 p-3",
-                showAdvanced
-                  ? "md:grid-cols-[1fr_2fr_2fr_auto]"
-                  : "md:grid-cols-[2fr_2fr_auto]",
-              )}
+              className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-2.5 w-full"
             >
               {showAdvanced && (
                 <Input
@@ -302,28 +297,32 @@ function SendButtonsForm({
                     })
                   }
                   placeholder="reply_id"
-                  className="bg-muted font-mono text-xs"
+                  className="h-8 w-20 shrink-0 bg-muted font-mono text-xs"
                 />
               )}
               <Input
                 value={b.title}
                 onChange={(e) => updateButton(i, { title: e.target.value })}
                 placeholder={t("optionTitlePlaceholder")}
-                className="bg-muted"
+                className="h-8 flex-1 min-w-0 bg-muted text-xs"
                 maxLength={20}
               />
-              <NodeKeySelect
-                value={b.next_node_key || null}
-                nodes={allNodes}
-                excludeKey={currentKey}
-                onChange={(v) => updateButton(i, { next_node_key: v ?? "" })}
-                placeholder={t("nextNodePlaceholder")}
-              />
+              <div className="w-[140px] shrink-0 sm:w-[150px] min-w-0">
+                <NodeKeySelect
+                  value={b.next_node_key || null}
+                  nodes={allNodes}
+                  excludeKey={currentKey}
+                  onChange={(v) => updateButton(i, { next_node_key: v ?? "" })}
+                  placeholder={t("nextNodePlaceholder")}
+                />
+              </div>
               <Button
+                type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={() => removeButton(i)}
-                className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                className="h-8 w-8 shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                aria-label={t("removeOption") ?? "Delete option"}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -332,12 +331,13 @@ function SendButtonsForm({
         </div>
         {buttons.length < 3 && (
           <Button
+            type="button"
             variant="ghost"
             size="sm"
             onClick={addButton}
-            className="mt-2"
+            className="mt-2 text-xs"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5 mr-1" />
             {t("addButton")}
           </Button>
         )}
@@ -485,88 +485,91 @@ function SendListForm({
             key={sIdx}
             className="mb-3 rounded-md border border-border bg-muted/40 p-3"
           >
-            <div className="mb-2 flex items-center gap-2">
+            <div className="mb-2.5 flex items-center gap-2">
               <Input
                 value={section.title ?? ""}
                 onChange={(e) =>
                   updateSection(sIdx, { title: e.target.value })
                 }
                 placeholder={t("sectionTitlePlaceholder", { count: sIdx + 1 })}
-                className="bg-muted text-xs"
+                className="h-8 bg-muted text-xs flex-1 min-w-0 font-medium"
               />
               {sections.length > 1 && (
                 <Button
+                  type="button"
                   variant="ghost"
-                  size="sm"
+                  size="icon"
                   onClick={() => removeSection(sIdx)}
-                  className="shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  className="h-8 w-8 shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
                   aria-label={t("removeSection")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               )}
             </div>
-            {section.rows.map((row, rIdx) => (
-              <div
-                key={rIdx}
-                className={cn(
-                  "mb-2 grid grid-cols-1 gap-2",
-                  showAdvanced
-                    ? "md:grid-cols-[1fr_2fr_2fr_auto]"
-                    : "md:grid-cols-[2fr_2fr_auto]",
-                )}
-              >
-                {showAdvanced && (
-                  <Input
-                    value={row.reply_id}
-                    onChange={(e) =>
-                      updateRow(sIdx, rIdx, {
-                        reply_id: slugify(
-                          e.target.value,
-                          `row_${rIdx + 1}`,
-                        ),
-                      })
-                    }
-                    placeholder="reply_id"
-                    className="bg-muted font-mono text-xs"
-                  />
-                )}
-                <Input
-                  value={row.title}
-                  onChange={(e) =>
-                    updateRow(sIdx, rIdx, { title: e.target.value })
-                  }
-                  placeholder={t("rowTitlePlaceholder")}
-                  className="bg-muted"
-                  maxLength={24}
-                />
-                <NodeKeySelect
-                  value={row.next_node_key || null}
-                  nodes={allNodes}
-                  excludeKey={currentKey}
-                  onChange={(v) =>
-                    updateRow(sIdx, rIdx, { next_node_key: v ?? "" })
-                  }
-                  placeholder={t("nextNodePlaceholder")}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeRow(sIdx, rIdx)}
-                  className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            <div className="flex flex-col gap-2">
+              {section.rows.map((row, rIdx) => (
+                <div
+                  key={rIdx}
+                  className="flex items-center gap-2 w-full"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+                  {showAdvanced && (
+                    <Input
+                      value={row.reply_id}
+                      onChange={(e) =>
+                        updateRow(sIdx, rIdx, {
+                          reply_id: slugify(
+                            e.target.value,
+                            `row_${rIdx + 1}`,
+                          ),
+                        })
+                      }
+                      placeholder="reply_id"
+                      className="h-8 w-20 shrink-0 bg-muted font-mono text-xs"
+                    />
+                  )}
+                  <Input
+                    value={row.title}
+                    onChange={(e) =>
+                      updateRow(sIdx, rIdx, { title: e.target.value })
+                    }
+                    placeholder={t("rowTitlePlaceholder")}
+                    className="h-8 flex-1 min-w-0 bg-muted text-xs"
+                    maxLength={24}
+                  />
+                  <div className="w-[140px] shrink-0 sm:w-[150px] min-w-0">
+                    <NodeKeySelect
+                      value={row.next_node_key || null}
+                      nodes={allNodes}
+                      excludeKey={currentKey}
+                      onChange={(v) =>
+                        updateRow(sIdx, rIdx, { next_node_key: v ?? "" })
+                      }
+                      placeholder={t("nextNodePlaceholder")}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeRow(sIdx, rIdx)}
+                    className="h-8 w-8 shrink-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                    aria-label={t("removeRow") ?? "Delete option"}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
             {totalRows < 10 && (
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => addRow(sIdx)}
-                className="mt-1"
+                className="mt-2 text-xs"
               >
-                <Plus className="h-3.5 w-3.5" />
+                <Plus className="h-3.5 w-3.5 mr-1" />
                 {t("addRow")}
               </Button>
             )}
