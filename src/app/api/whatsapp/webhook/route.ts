@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl, downloadMedia, sendTextMessage } from '@/lib/whatsapp/meta-api'
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import {
@@ -404,7 +404,10 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // Default ON: the column is NOT NULL DEFAULT TRUE, but a row
           // read before migration 039 lands would have it undefined,
           // and losing attachments is the failure mode worth avoiding.
-          config.mirror_inbound_media !== false
+          config.mirror_inbound_media !== false,
+          config.phone_number_id,
+          config.forward_to_phone,
+          Boolean(config.forward_enabled)
         )
       }
     }
@@ -577,6 +580,73 @@ async function handleReaction(
   }
 }
 
+async function forwardInboundMessageToAdmin(args: {
+  phoneNumberId: string
+  accessToken: string
+  forwardToPhone: string | null | undefined
+  forwardEnabled: boolean | undefined
+  customerName: string
+  customerPhone: string
+  messageType: string
+  contentText: string | null
+}) {
+  const {
+    phoneNumberId,
+    accessToken,
+    forwardToPhone,
+    forwardEnabled,
+    customerName,
+    customerPhone,
+    messageType,
+    contentText,
+  } = args
+
+  if (!forwardEnabled || !forwardToPhone || !phoneNumberId) return
+
+  const cleanAdmin = normalizePhone(forwardToPhone)
+  const cleanCustomer = normalizePhone(customerPhone)
+
+  // Prevent infinite loop if the admin messages the business account directly
+  if (!cleanAdmin || cleanAdmin === cleanCustomer) return
+
+  let messagePreview = (contentText || '').trim()
+  if (!messagePreview) {
+    if (messageType === 'image') messagePreview = '📷 [Image]'
+    else if (messageType === 'video') messagePreview = '🎥 [Video]'
+    else if (messageType === 'document') messagePreview = '📄 [Document]'
+    else if (messageType === 'audio') messagePreview = '🎤 [Voice note / Audio]'
+    else if (messageType === 'location') messagePreview = '📍 [Location]'
+    else messagePreview = `[${messageType}]`
+  }
+
+  const timeStr = new Date().toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  const alertText = [
+    '🔔 *New Customer Message Alert*',
+    '',
+    `👤 *From:* ${customerName || 'Customer'}`,
+    `📱 *Phone:* +${cleanCustomer}`,
+    `💬 *Message:* ${messagePreview}`,
+    `⏰ *Time:* ${timeStr}`,
+  ].join('\n')
+
+  try {
+    const res = await sendTextMessage({
+      phoneNumberId,
+      accessToken,
+      to: cleanAdmin,
+      text: alertText,
+    })
+    console.info(`[auto-forward] forwarded message ${res.messageId} to admin ${cleanAdmin}`)
+  } catch (err) {
+    console.warn(`[auto-forward] failed to forward message to admin ${cleanAdmin}:`, err)
+  }
+}
+
 async function processMessage(
   message: WhatsAppMessage,
   contact: WaContactPayload | undefined,
@@ -591,7 +661,10 @@ async function processMessage(
   accessToken: string,
   // Per-account opt-out for the inbound-media mirror (migration 039).
   // See parseMessageContent for what it turns off.
-  mirrorMedia: boolean
+  mirrorMedia: boolean,
+  phoneNumberId?: string,
+  forwardToPhone?: string | null,
+  forwardEnabled?: boolean
 ) {
   // Phone number OR business-scoped user ID — Meta sends only the
   // latter for a sender who has adopted a WhatsApp username (#519).
@@ -780,6 +853,20 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // Auto-forward incoming message to Admin WhatsApp if enabled in Settings
+  if (forwardEnabled && forwardToPhone && phoneNumberId) {
+    await forwardInboundMessageToAdmin({
+      phoneNumberId,
+      accessToken,
+      forwardToPhone,
+      forwardEnabled,
+      customerName: contactRecord.name || contact?.profile?.name || 'Customer',
+      customerPhone: contactRecord.phone || message.from || '',
+      messageType: message.type || 'text',
+      contentText: contentText ?? message.text?.body ?? null,
+    }).catch((err) => console.warn('[auto-forward] dispatch failed:', err))
+  }
 
   // ============================================================
   // Flow runner dispatch.

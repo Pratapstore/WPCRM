@@ -320,6 +320,10 @@ export interface WhatsAppConfig {
    * inbound attachments expire. Migration 039.
    */
   mirror_inbound_media?: boolean;
+  /** Admin WhatsApp phone number to which customer messages are forwarded. */
+  forward_to_phone?: string;
+  /** Whether auto-forwarding customer messages to the admin phone is enabled. */
+  forward_enabled?: boolean;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

@@ -15,6 +15,7 @@ import {
   RotateCcw,
   QrCode,
   Globe,
+  PhoneForwarded,
 } from 'lucide-react';
 import { WhatsAppQrLinker } from './whatsapp-qr-linker';
 import { createClient } from '@/lib/supabase/client';
@@ -26,6 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Accordion,
@@ -120,6 +122,11 @@ export function WhatsAppConfig() {
   const [mirrorMedia, setMirrorMedia] = useState(true);
   const [savingMirror, setSavingMirror] = useState(false);
 
+  // Auto-forward incoming customer messages to an Admin WhatsApp number
+  const [forwardToPhone, setForwardToPhone] = useState('');
+  const [forwardEnabled, setForwardEnabled] = useState(false);
+  const [savingForward, setSavingForward] = useState(false);
+
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
   // Meta will silently drop every inbound event — that's the
@@ -178,6 +185,8 @@ export function WhatsAppConfig() {
         // Undefined on a row read before migration 039 — treat that as
         // on, matching the webhook's own default.
         setMirrorMedia(data.mirror_inbound_media !== false);
+        setForwardToPhone(data.forward_to_phone || '');
+        setForwardEnabled(Boolean(data.forward_enabled));
       } else {
         setConfig(null);
         setPhoneNumberId('');
@@ -188,6 +197,8 @@ export function WhatsAppConfig() {
         setTokenEdited(false);
         setVerifyEdited(false);
         setMirrorMedia(true);
+        setForwardToPhone('');
+        setForwardEnabled(false);
       }
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
@@ -267,6 +278,58 @@ export function WhatsAppConfig() {
       toast.error(t('mirrorInboundSaveFailed'));
     } finally {
       setSavingMirror(false);
+    }
+  }
+
+  async function handleToggleForwardEnabled(next: boolean) {
+    if (!config || !accountId || savingForward) return;
+    const previous = forwardEnabled;
+    setForwardEnabled(next);
+    setSavingForward(true);
+    try {
+      const { error } = await supabase
+        .from('whatsapp_config')
+        .update({ forward_enabled: next })
+        .eq('account_id', accountId);
+      if (error) throw new Error(error.message);
+      setConfig({ ...config, forward_enabled: next });
+      if (next && !forwardToPhone.trim()) {
+        toast.info('Please enter your Admin WhatsApp number and click "Save Number".');
+      } else {
+        toast.success(next ? 'Auto-forwarding turned ON' : 'Auto-forwarding turned OFF');
+      }
+    } catch (error) {
+      console.error('Failed to update auto-forwarding setting:', error);
+      setForwardEnabled(previous);
+      toast.error('Failed to update auto-forwarding setting');
+    } finally {
+      setSavingForward(false);
+    }
+  }
+
+  async function handleSaveForwardPhone() {
+    if (!config || !accountId || savingForward) return;
+    const clean = forwardToPhone.replace(/[^\d+]/g, '').trim();
+    if (!clean) {
+      toast.error('Please enter a valid phone number with country code (e.g. +91 9876543210)');
+      return;
+    }
+    setSavingForward(true);
+    try {
+      const { error } = await supabase
+        .from('whatsapp_config')
+        .update({ forward_to_phone: clean, forward_enabled: true })
+        .eq('account_id', accountId);
+      if (error) throw new Error(error.message);
+      setConfig({ ...config, forward_to_phone: clean, forward_enabled: true });
+      setForwardToPhone(clean);
+      setForwardEnabled(true);
+      toast.success('Admin WhatsApp number saved & auto-forwarding turned ON!');
+    } catch (error) {
+      console.error('Failed to save forward phone:', error);
+      toast.error('Failed to save admin number');
+    } finally {
+      setSavingForward(false);
     }
   }
 
@@ -956,6 +1019,91 @@ export function WhatsAppConfig() {
                   disabled={savingMirror || !canEditSettings}
                   aria-label={t('mirrorInbound')}
                 />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Auto-Forward to Admin WhatsApp */}
+        {config && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-foreground flex items-center gap-2">
+                    <PhoneForwarded className="size-4 text-primary" />
+                    Auto-Forward to Admin (WhatsApp)
+                  </CardTitle>
+                  <CardDescription className="text-muted-foreground">
+                    Customer ka aane wala har WhatsApp message automatically aapke doosre mobile WhatsApp number par forward ho jayega.
+                  </CardDescription>
+                </div>
+                <span
+                  className={cn(
+                    "text-xs px-2.5 py-1 rounded-full font-medium transition-colors",
+                    forwardEnabled
+                      ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
+                      : "bg-muted text-muted-foreground border border-border"
+                  )}
+                >
+                  {forwardEnabled ? "Active" : "Disabled"}
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/20 p-3">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-foreground">
+                    Forward Incoming Messages
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Turn ON to automatically forward incoming customer chats and alerts to the admin WhatsApp number.
+                  </p>
+                </div>
+                <Switch
+                  checked={forwardEnabled}
+                  onCheckedChange={handleToggleForwardEnabled}
+                  disabled={savingForward || !canEditSettings}
+                  aria-label="Forward Incoming Messages"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-muted-foreground text-xs font-medium">
+                  Admin WhatsApp Number (Country code ke saath, e.g. +91 9876543210)
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="tel"
+                    placeholder="+91 9876543210"
+                    value={forwardToPhone}
+                    onChange={(e) => setForwardToPhone(e.target.value)}
+                    disabled={savingForward || !canEditSettings}
+                    className="bg-card font-mono text-sm h-9"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleSaveForwardPhone}
+                    disabled={
+                      savingForward ||
+                      !canEditSettings ||
+                      forwardToPhone.trim() === (config.forward_to_phone || '')
+                    }
+                    className="shrink-0 text-xs h-9 px-4 font-medium"
+                  >
+                    {savingForward ? (
+                      <>
+                        <Loader2 className="size-3.5 animate-spin mr-1.5" />
+                        Saving…
+                      </>
+                    ) : (
+                      "Save Number"
+                    )}
+                  </Button>
+                </div>
+                <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                  💡 <strong>Format:</strong> <code>+919876543210</code> (Country code lagana zaroori hai). Customer ka aane wala har message, unka naam aur phone number ke sath is number par real-time alert ban kar aayega.
+                </p>
               </div>
             </CardContent>
           </Card>
