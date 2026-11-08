@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia, sendTextMessage } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl, downloadMedia, sendTextMessage, sendMediaMessage } from '@/lib/whatsapp/meta-api'
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import {
@@ -589,6 +589,9 @@ async function forwardInboundMessageToAdmin(args: {
   customerPhone: string
   messageType: string
   contentText: string | null
+  mediaUrl?: string | null
+  rawMediaId?: string
+  filename?: string
 }) {
   const {
     phoneNumberId,
@@ -599,6 +602,9 @@ async function forwardInboundMessageToAdmin(args: {
     customerPhone,
     messageType,
     contentText,
+    mediaUrl,
+    rawMediaId,
+    filename,
   } = args
 
   if (!forwardEnabled || !forwardToPhone || !phoneNumberId) return
@@ -609,37 +615,143 @@ async function forwardInboundMessageToAdmin(args: {
   // Prevent infinite loop if the admin messages the business account directly
   if (!cleanAdmin || cleanAdmin === cleanCustomer) return
 
+  let typeLabel = 'Message'
+  if (messageType === 'image' || messageType === 'sticker') typeLabel = 'Photo'
+  else if (messageType === 'video') typeLabel = 'Video'
+  else if (messageType === 'document') typeLabel = 'Document'
+  else if (messageType === 'audio') typeLabel = 'Voice Note'
+  else if (messageType === 'location') typeLabel = 'Location'
+
   let messagePreview = (contentText || '').trim()
   if (!messagePreview) {
-    if (messageType === 'image') messagePreview = '📷 [Image]'
+    if (messageType === 'image' || messageType === 'sticker') messagePreview = '📷 [Photo]'
     else if (messageType === 'video') messagePreview = '🎥 [Video]'
-    else if (messageType === 'document') messagePreview = '📄 [Document]'
+    else if (messageType === 'document') messagePreview = filename ? `📄 [Document: ${filename}]` : '📄 [Document]'
     else if (messageType === 'audio') messagePreview = '🎤 [Voice note / Audio]'
     else if (messageType === 'location') messagePreview = '📍 [Location]'
     else messagePreview = `[${messageType}]`
   }
 
-  const timeStr = new Date().toLocaleTimeString('en-IN', {
+  // Real-time Asia/Kolkata (IST) timezone
+  const timeStr = new Date().toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
-  })
+  }).toLowerCase()
 
-  const alertText = [
-    '🔔 *New Customer Message Alert*',
+  const alertBody = [
+    `🔔 *New Customer ${typeLabel} Alert*`,
     '',
     `👤 *From:* ${customerName || 'Customer'}`,
     `📱 *Phone:* +${cleanCustomer}`,
-    `💬 *Message:* ${messagePreview}`,
+    `💬 *${messageType === 'image' || messageType === 'video' ? 'Caption' : 'Message'}:* ${messagePreview}`,
     `⏰ *Time:* ${timeStr}`,
   ].join('\n')
 
+  const alertCaption = alertBody.length > 1000 ? alertBody.slice(0, 997) + '...' : alertBody
+  const mediaLink = mediaUrl && mediaUrl.startsWith('http') ? mediaUrl : undefined
+
+  // Helper to try sending media via link or rawMediaId
+  const trySendMedia = async (kind: 'image' | 'video' | 'document') => {
+    if (mediaLink) {
+      try {
+        const res = await sendMediaMessage({
+          phoneNumberId,
+          accessToken,
+          to: cleanAdmin,
+          kind,
+          link: mediaLink,
+          caption: alertCaption,
+          filename: kind === 'document' ? (filename || 'document') : undefined,
+        })
+        console.info(`[auto-forward] forwarded ${kind} ${res.messageId} via link to admin ${cleanAdmin}`)
+        return true
+      } catch (err) {
+        console.warn(`[auto-forward] failed to forward ${kind} via link, trying mediaId:`, err)
+      }
+    }
+    if (rawMediaId) {
+      try {
+        const res = await sendMediaMessage({
+          phoneNumberId,
+          accessToken,
+          to: cleanAdmin,
+          kind,
+          mediaId: rawMediaId,
+          caption: alertCaption,
+          filename: kind === 'document' ? (filename || 'document') : undefined,
+        })
+        console.info(`[auto-forward] forwarded ${kind} ${res.messageId} via mediaId to admin ${cleanAdmin}`)
+        return true
+      } catch (err) {
+        console.warn(`[auto-forward] failed to forward ${kind} via mediaId:`, err)
+      }
+    }
+    return false
+  }
+
+  if (messageType === 'image' || messageType === 'sticker') {
+    const sent = await trySendMedia('image')
+    if (sent) return
+  } else if (messageType === 'video') {
+    const sent = await trySendMedia('video')
+    if (sent) return
+  } else if (messageType === 'document') {
+    const sent = await trySendMedia('document')
+    if (sent) return
+  } else if (messageType === 'audio') {
+    // Send alert text first
+    try {
+      await sendTextMessage({
+        phoneNumberId,
+        accessToken,
+        to: cleanAdmin,
+        text: alertBody,
+      })
+    } catch (txtErr) {
+      console.warn(`[auto-forward] failed to send audio text alert:`, txtErr)
+    }
+
+    // Then send voice note/audio
+    if (mediaLink) {
+      try {
+        await sendMediaMessage({
+          phoneNumberId,
+          accessToken,
+          to: cleanAdmin,
+          kind: 'audio',
+          link: mediaLink,
+        })
+        return
+      } catch (audioLinkErr) {
+        console.warn(`[auto-forward] failed to send audio via link:`, audioLinkErr)
+      }
+    }
+    if (rawMediaId) {
+      try {
+        await sendMediaMessage({
+          phoneNumberId,
+          accessToken,
+          to: cleanAdmin,
+          kind: 'audio',
+          mediaId: rawMediaId,
+        })
+        return
+      } catch (audioIdErr) {
+        console.warn(`[auto-forward] failed to send audio via mediaId:`, audioIdErr)
+      }
+    }
+    return
+  }
+
+  // Fallback text alert if not media, or if media send was not successful
   try {
     const res = await sendTextMessage({
       phoneNumberId,
       accessToken,
       to: cleanAdmin,
-      text: alertText,
+      text: alertBody,
     })
     console.info(`[auto-forward] forwarded message ${res.messageId} to admin ${cleanAdmin}`)
   } catch (err) {
@@ -865,6 +977,14 @@ async function processMessage(
       customerPhone: contactRecord.phone || message.from || '',
       messageType: message.type || 'text',
       contentText: contentText ?? message.text?.body ?? null,
+      mediaUrl,
+      rawMediaId:
+        message.image?.id ||
+        message.video?.id ||
+        message.document?.id ||
+        message.audio?.id ||
+        message.sticker?.id,
+      filename: message.document?.filename,
     }).catch((err) => console.warn('[auto-forward] dispatch failed:', err))
   }
 

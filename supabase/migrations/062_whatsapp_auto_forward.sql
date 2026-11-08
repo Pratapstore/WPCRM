@@ -6,3 +6,4 @@
 ALTER TABLE whatsapp_config
   ADD COLUMN IF NOT EXISTS forward_to_phone TEXT,
   ADD COLUMN IF NOT EXISTS forward_enabled BOOLEAN NOT NULL DEFAULT false;
+
