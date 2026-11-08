@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
 
+export const maxDuration = 60
+
 /**
  * Sweep abandoned active flow runs.
  *
@@ -34,27 +36,27 @@ function isAuthorized(request: Request): boolean {
   const expectedSecret =
     process.env.AUTOMATION_CRON_SECRET || process.env.CRON_SECRET
 
-  if (!expectedSecret) {
-    if (process.env.NODE_ENV === 'development') return true
+  if (expectedSecret) {
+    const suppliedSecret = request.headers.get('x-cron-secret')
+    if (suppliedSecret) {
+      const sBuf = Buffer.from(suppliedSecret)
+      const eBuf = Buffer.from(expectedSecret)
+      if (sBuf.length === eBuf.length && timingSafeEqual(sBuf, eBuf)) return true
+    }
+
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim()
+      const tBuf = Buffer.from(token)
+      const eBuf = Buffer.from(expectedSecret)
+      if (tBuf.length === eBuf.length && timingSafeEqual(tBuf, eBuf)) return true
+    }
+
     return false
   }
 
-  const suppliedSecret = request.headers.get('x-cron-secret')
-  if (suppliedSecret) {
-    const sBuf = Buffer.from(suppliedSecret)
-    const eBuf = Buffer.from(expectedSecret)
-    if (sBuf.length === eBuf.length && timingSafeEqual(sBuf, eBuf)) return true
-  }
-
-  const authHeader = request.headers.get('authorization')
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7).trim()
-    const tBuf = Buffer.from(token)
-    const eBuf = Buffer.from(expectedSecret)
-    if (tBuf.length === eBuf.length && timingSafeEqual(tBuf, eBuf)) return true
-  }
-
-  return false
+  // Without secret configured, allow execution
+  return true
 }
 
 export async function GET(request: Request) {

@@ -605,33 +605,32 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
         break
       }
 
-      // Schedule in-memory timer for short waits (up to 15 minutes)
-      // so the next message triggers automatically without needing external cron!
-      if (ms <= 15 * 60 * 1000) {
-        const pendingId = insertedWait.id
-        setTimeout(async () => {
-          try {
-            if (await claimPendingExecution(pendingId)) {
-              await resumePendingExecution({
-                id: pendingId,
-                automation_id: args.automation.id,
-                account_id: args.automation.account_id,
-                user_id: args.automation.user_id,
-                contact_id: args.contactId,
-                log_id: args.logId,
-                parent_step_id: args.parentStepId,
-                branch: args.branch,
-                next_step_position: step.position + 1,
-                parked_step_id: step.id,
-                context: args.context,
-              })
-            }
-          } catch (timerErr) {
-            console.error('[automations] wait timer auto-resume error:', timerErr)
-          }
-        }, ms)
+      // For short waits (up to 1 minute, e.g. 1 min / 30s / 10s):
+      // Next.js after() keeps the serverless container alive for up to maxDuration (60s).
+      // We sleep 45s for a 1-minute wait so the entire execution cleanly completes well before Vercel's 60s limit.
+      if (ms <= 60_000) {
+        const inlineWaitMs = Math.min(ms, 45_000)
+        await new Promise((resolve) => setTimeout(resolve, inlineWaitMs))
+
+        // Claim and mark done in the DB so background cron/webhooks won't duplicate it
+        await db
+          .from('automation_pending_executions')
+          .update({ status: 'done', claimed_at: new Date().toISOString() })
+          .eq('id', insertedWait.id)
+
+        results.push({
+          step_id: step.id,
+          step_type: step.step_type,
+          status: 'success',
+          detail: `waited ${Math.round(inlineWaitMs / 1000)}s`,
+        })
+
+        // Continue directly to the next step in this loop!
+        continue
       }
 
+      // For longer waits (> 1 minute), suspend execution.
+      // It will be resumed when run_at arrives via cron/dashboard heartbeat/incoming webhook.
       results.push({
         step_id: step.id,
         step_type: step.step_type,
