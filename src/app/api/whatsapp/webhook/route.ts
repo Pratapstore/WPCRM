@@ -84,9 +84,10 @@ interface WhatsAppMessage {
    * to advance the per-contact run.
    */
   interactive?: {
-    type: 'button_reply' | 'list_reply'
+    type?: 'button_reply' | 'list_reply' | string
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
+    nfm_reply?: { name?: string; body?: string; response_json?: string }
   }
   /**
    * Set when the customer taps a QUICK_REPLY button on a *template*
@@ -592,6 +593,10 @@ async function forwardInboundMessageToAdmin(args: {
   mediaUrl?: string | null
   rawMediaId?: string
   filename?: string
+  interactiveType?: string | null
+  buttonTitle?: string | null
+  listTitle?: string | null
+  listDescription?: string | null
 }) {
   const {
     phoneNumberId,
@@ -605,6 +610,10 @@ async function forwardInboundMessageToAdmin(args: {
     mediaUrl,
     rawMediaId,
     filename,
+    interactiveType,
+    buttonTitle,
+    listTitle,
+    listDescription,
   } = args
 
   if (!forwardEnabled || !forwardToPhone || !phoneNumberId) return
@@ -616,20 +625,47 @@ async function forwardInboundMessageToAdmin(args: {
   if (!cleanAdmin || cleanAdmin === cleanCustomer) return
 
   let typeLabel = 'Message'
-  if (messageType === 'image' || messageType === 'sticker') typeLabel = 'Photo'
-  else if (messageType === 'video') typeLabel = 'Video'
-  else if (messageType === 'document') typeLabel = 'Document'
-  else if (messageType === 'audio') typeLabel = 'Voice Note'
-  else if (messageType === 'location') typeLabel = 'Location'
-
+  let fieldLabel = 'Message'
   let messagePreview = (contentText || '').trim()
-  if (!messagePreview) {
-    if (messageType === 'image' || messageType === 'sticker') messagePreview = '📷 [Photo]'
-    else if (messageType === 'video') messagePreview = '🎥 [Video]'
-    else if (messageType === 'document') messagePreview = filename ? `📄 [Document: ${filename}]` : '📄 [Document]'
-    else if (messageType === 'audio') messagePreview = '🎤 [Voice note / Audio]'
-    else if (messageType === 'location') messagePreview = '📍 [Location]'
-    else messagePreview = `[${messageType}]`
+
+  if (messageType === 'image' || messageType === 'sticker') {
+    typeLabel = 'Photo'
+    fieldLabel = 'Caption'
+    if (!messagePreview) messagePreview = '📷 [Photo]'
+  } else if (messageType === 'video') {
+    typeLabel = 'Video'
+    fieldLabel = 'Caption'
+    if (!messagePreview) messagePreview = '🎥 [Video]'
+  } else if (messageType === 'document') {
+    typeLabel = 'Document'
+    fieldLabel = 'Document'
+    if (!messagePreview) messagePreview = filename ? `📄 [Document: ${filename}]` : '📄 [Document]'
+  } else if (messageType === 'audio') {
+    typeLabel = 'Voice Note'
+    fieldLabel = 'Audio'
+    if (!messagePreview) messagePreview = '🎤 [Voice note / Audio]'
+  } else if (messageType === 'location') {
+    typeLabel = 'Location'
+    fieldLabel = 'Location'
+    if (!messagePreview) messagePreview = '📍 [Location]'
+  } else if (interactiveType === 'button_reply' || messageType === 'button') {
+    typeLabel = 'Button Reply'
+    fieldLabel = 'Button Clicked'
+    if (buttonTitle) messagePreview = buttonTitle
+    else if (!messagePreview) messagePreview = '🔘 [Button Clicked]'
+  } else if (interactiveType === 'list_reply') {
+    typeLabel = 'List Selection'
+    fieldLabel = 'Selected Option'
+    if (listTitle) messagePreview = listTitle
+    else if (!messagePreview) messagePreview = '📋 [List Option Selected]'
+  } else if (messageType === 'order') {
+    typeLabel = 'Catalog Order'
+    fieldLabel = 'Order'
+    if (!messagePreview) messagePreview = '🛍️ [Catalog Order]'
+  } else if (messageType === 'contacts') {
+    typeLabel = 'Contact Shared'
+    fieldLabel = 'Contact'
+    if (!messagePreview) messagePreview = '👤 [Contact Card]'
   }
 
   // Real-time Asia/Kolkata (IST) timezone
@@ -640,15 +676,21 @@ async function forwardInboundMessageToAdmin(args: {
     hour12: true,
   }).toLowerCase()
 
-  const alertBody = [
+  const alertLines = [
     `🔔 *New Customer ${typeLabel} Alert*`,
     '',
     `👤 *From:* ${customerName || 'Customer'}`,
     `📱 *Phone:* +${cleanCustomer}`,
-    `💬 *${messageType === 'image' || messageType === 'video' ? 'Caption' : 'Message'}:* ${messagePreview}`,
-    `⏰ *Time:* ${timeStr}`,
-  ].join('\n')
+    `💬 *${fieldLabel}:* ${messagePreview}`,
+  ]
 
+  if (interactiveType === 'list_reply' && listDescription) {
+    alertLines.push(`📝 *Details:* ${listDescription}`)
+  }
+
+  alertLines.push(`⏰ *Time:* ${timeStr}`)
+
+  const alertBody = alertLines.join('\n')
   const alertCaption = alertBody.length > 1000 ? alertBody.slice(0, 997) + '...' : alertBody
   const mediaLink = mediaUrl && mediaUrl.startsWith('http') ? mediaUrl : undefined
 
@@ -968,6 +1010,23 @@ async function processMessage(
 
   // Auto-forward incoming message to Admin WhatsApp if enabled in Settings
   if (forwardEnabled && forwardToPhone && phoneNumberId) {
+    const interactiveType =
+      message.interactive?.type ||
+      (message.type === 'button' ? 'button_reply' : null)
+
+    const buttonTitle =
+      message.interactive?.button_reply?.title ||
+      message.button?.text ||
+      null
+
+    const listTitle =
+      message.interactive?.list_reply?.title ||
+      null
+
+    const listDescription =
+      message.interactive?.list_reply?.description ||
+      null
+
     await forwardInboundMessageToAdmin({
       phoneNumberId,
       accessToken,
@@ -985,6 +1044,10 @@ async function processMessage(
         message.audio?.id ||
         message.sticker?.id,
       filename: message.document?.filename,
+      interactiveType,
+      buttonTitle,
+      listTitle,
+      listDescription,
     }).catch((err) => console.warn('[auto-forward] dispatch failed:', err))
   }
 
@@ -1330,6 +1393,14 @@ async function parseMessageContent(
           ...empty,
           contentText: reply.title || reply.id,
           interactiveReplyId: reply.id,
+        }
+      }
+      if (message.interactive?.nfm_reply) {
+        const nfm = message.interactive.nfm_reply
+        return {
+          ...empty,
+          contentText: nfm.body || 'Form submitted',
+          interactiveReplyId: nfm.name || 'nfm_reply',
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
