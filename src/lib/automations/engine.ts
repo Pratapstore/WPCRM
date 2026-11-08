@@ -739,8 +739,8 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'send_message': {
       const cfg = step.step_config as SendMessageStepConfig
       if (!args.contactId) throw new Error(tErr('needsContact', { step: 'send_message' }))
-      const text = interpolate(cfg.text, args)
-      if (!text.trim()) throw new Error(tErr('emptyText'))
+      const text = interpolate(cfg.text || '', args)
+      if (!text.trim() && !cfg.media_url) throw new Error(tErr('emptyText'))
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
@@ -748,6 +748,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         conversationId,
         contactId: args.contactId,
         text,
+        mediaUrl: cfg.media_url,
+        mediaType: cfg.media_type,
+        fileName: cfg.file_name,
       })
       return `sent via Meta (${whatsapp_message_id})`
     }

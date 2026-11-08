@@ -380,6 +380,9 @@ export async function sendMessageToConversation(
         textToSend = interactivePayload.body || '';
         headerToSend = interactivePayload.header;
         footerToSend = interactivePayload.footer;
+        if (interactivePayload.media_url && !mediaToSend) {
+          mediaToSend = interactivePayload.media_url;
+        }
         if (interactivePayload.kind === 'buttons' && interactivePayload.buttons?.length) {
           buttonsToSend = interactivePayload.buttons;
         } else if (interactivePayload.kind === 'list' && interactivePayload.sections?.length) {
@@ -468,8 +471,8 @@ export async function sendMessageToConversation(
           accessToken,
           to: phone,
           bodyText: p.body,
-          headerText: !mediaUrl ? (p.header || undefined) : undefined,
-          headerImage: mediaUrl || undefined,
+          headerText: !(mediaUrl || p.media_url) ? (p.header || undefined) : undefined,
+          headerImage: mediaUrl || p.media_url || undefined,
           footerText: p.footer || undefined,
           buttons: p.buttons,
           contextMessageId,

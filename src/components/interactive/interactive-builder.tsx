@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Upload, Image as ImageIcon, FileText, Film, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
+import { uploadAccountMedia } from "@/lib/storage/upload-media";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,14 +77,40 @@ export function InteractiveBuilder({
 }: InteractiveBuilderProps) {
   const t = useTranslations("Interactive");
   const [advanced, setAdvanced] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const validation = validateInteractivePayload(value);
 
   const setField = (patch: Partial<InteractiveMessagePayload>) =>
     onChange({ ...value, ...patch } as InteractiveMessagePayload);
 
+  const handleUploadMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingMedia(true);
+    try {
+      const res = await uploadAccountMedia("chat-media", file);
+      const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+      const isVideo = file.type.startsWith("video/");
+      const mediaType = isPdf ? "document" : isVideo ? "video" : "image";
+      setField({ media_url: res.publicUrl, media_type: mediaType });
+      toast.success(`Media "${file.name}" uploaded successfully`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload media");
+    } finally {
+      setIsUploadingMedia(false);
+      e.target.value = "";
+    }
+  };
+
   const switchKind = (kind: "buttons" | "list") => {
     if (kind === value.kind) return;
-    const shared = { body: value.body || "", header: value.header, footer: value.footer };
+    const shared = {
+      body: value.body || "",
+      header: value.header,
+      footer: value.footer,
+      media_url: value.media_url,
+      media_type: value.media_type,
+    };
     onChange(
       kind === "buttons"
         ? { ...blankButtonsPayload(), ...shared }
@@ -148,6 +176,71 @@ export function InteractiveBuilder({
                 className="bg-muted text-foreground"
               />
             </Field>
+          </div>
+
+          {/* Header Media Attachment (Optional Image / PDF / Video) */}
+          <div className="rounded-lg border border-border/70 bg-card/60 p-2.5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span className="flex items-center gap-1.5 text-foreground">
+                <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                Header Media (Image / Document)
+              </span>
+              {value.media_url ? (
+                <button
+                  type="button"
+                  onClick={() => setField({ media_url: undefined, media_type: undefined })}
+                  className="text-[11px] text-destructive hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="h-3 w-3" /> Remove Media
+                </button>
+              ) : null}
+            </div>
+
+            {value.media_url ? (
+              <div className="flex items-center gap-3 p-2 rounded-md bg-muted/40 border border-border/50">
+                <div className="h-12 w-12 rounded overflow-hidden bg-black/30 shrink-0 flex items-center justify-center border border-border/50">
+                  {value.media_url.toLowerCase().includes('.pdf') ? (
+                    <FileText className="h-6 w-6 text-red-400" />
+                  ) : value.media_url.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
+                    <Film className="h-6 w-6 text-blue-400" />
+                  ) : (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={value.media_url} alt="header preview" className="h-full w-full object-cover" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 text-xs">
+                  <div className="font-medium truncate text-foreground">
+                    {value.media_url.split('/').pop()?.split('?')[0] || 'Media Attachment'}
+                  </div>
+                  <div className="text-[10px] text-emerald-400">Attached to Header • Ready</div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <label className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md border border-dashed border-border/80 bg-muted/30 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
+                  {isUploadingMedia ? (
+                    <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5 text-primary" />
+                  )}
+                  <span>{isUploadingMedia ? "Uploading..." : "Upload Image or Document"}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf,video/*"
+                    onChange={handleUploadMedia}
+                    disabled={isUploadingMedia}
+                    className="hidden"
+                  />
+                </label>
+                <div className="text-[11px] text-muted-foreground">or</div>
+                <Input
+                  value={value.media_url ?? ""}
+                  placeholder="Paste Media URL..."
+                  onChange={(e) => setField({ media_url: e.target.value.trim() || undefined })}
+                  className="flex-1 h-8 text-xs bg-muted"
+                />
+              </div>
+            )}
           </div>
 
           {value.kind === "buttons" ? (

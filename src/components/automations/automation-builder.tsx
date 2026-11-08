@@ -33,7 +33,13 @@ import {
   ArrowUp,
   MousePointerClick,
   List,
+  Upload,
+  Image as ImageIcon,
+  Film,
+  Music,
 } from "lucide-react"
+
+import { uploadAccountMedia } from "@/lib/storage/upload-media"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -193,7 +199,7 @@ function asInteractive(cfg: Record<string, unknown>): InteractiveMessagePayload 
 function blankConfig(type: AutomationStepType): Record<string, unknown> {
   switch (type) {
     case "send_message":
-      return { text: "" }
+      return { text: "", media_url: "", media_type: "image" }
     case "send_buttons":
       return toStepConfig(blankButtonsPayload())
     case "send_list":
@@ -1387,6 +1393,172 @@ function ConditionEditor({
 }
 
 
+function SendMessageStepFields({
+  cfg,
+  set,
+  t,
+}: {
+  cfg: Record<string, unknown>
+  set: (patch: Record<string, unknown>) => void
+  t: ReturnType<typeof useTranslations>
+}) {
+  const [isUploading, setIsUploading] = useState(false)
+  const mediaUrl = (cfg.media_url as string) || ""
+  const mediaType = (cfg.media_type as string) || "image"
+  const fileName = (cfg.file_name as string) || ""
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsUploading(true)
+    try {
+      const res = await uploadAccountMedia("chat-media", file)
+      const name = file.name.toLowerCase()
+      let detectedType = "image"
+      if (name.endsWith(".pdf") || file.type === "application/pdf") {
+        detectedType = "document"
+      } else if (file.type.startsWith("video/") || name.match(/\.(mp4|mov|avi|mkv)$/)) {
+        detectedType = "video"
+      } else if (file.type.startsWith("audio/") || name.match(/\.(mp3|ogg|wav|m4a)$/)) {
+        detectedType = "audio"
+      }
+      set({
+        media_url: res.publicUrl,
+        media_type: detectedType,
+        file_name: file.name,
+      })
+      toast.success(`Media "${file.name}" uploaded successfully!`)
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload media")
+    } finally {
+      setIsUploading(false)
+      e.target.value = ""
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <FieldBlock label={t("config.messageText")}>
+        <Textarea
+          value={(cfg.text as string) ?? ""}
+          onChange={(e) => set({ text: e.target.value })}
+          placeholder={mediaUrl ? "Enter optional caption (supports {{ contact.name }})..." : t("config.placeholderMessageText")}
+          className="min-h-20 bg-muted text-foreground"
+        />
+        <div className="text-[11px] text-muted-foreground mt-1">
+          {mediaUrl ? "WhatsApp sends this text as the media caption." : "Personalize with {{ contact.name }} or custom fields."}
+        </div>
+      </FieldBlock>
+
+      {/* Media Attachment Block */}
+      <div className="rounded-lg border border-border/80 bg-card/60 p-3 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <ImageIcon className="w-3.5 h-3.5 text-primary" />
+            Media Attachment (Image, Video, PDF, Audio)
+          </span>
+          {mediaUrl && (
+            <button
+              type="button"
+              onClick={() => set({ media_url: "", media_type: undefined, file_name: undefined })}
+              className="text-[11px] text-destructive hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <Trash2 className="w-3 h-3" /> Remove
+            </button>
+          )}
+        </div>
+
+        {mediaUrl ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/40 border border-border/60">
+              <div className="h-14 w-14 rounded-md overflow-hidden bg-black/30 shrink-0 flex items-center justify-center border border-border/50">
+                {mediaType === "document" || mediaUrl.toLowerCase().includes(".pdf") ? (
+                  <FileText className="h-7 w-7 text-red-400" />
+                ) : mediaType === "video" || mediaUrl.toLowerCase().match(/\.(mp4|mov|avi)$/i) ? (
+                  <Film className="h-7 w-7 text-blue-400" />
+                ) : mediaType === "audio" ? (
+                  <Music className="h-7 w-7 text-amber-400" />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={mediaUrl} alt="uploaded media" className="h-full w-full object-cover" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0 text-xs">
+                <div className="font-medium truncate text-foreground">
+                  {fileName || mediaUrl.split("/").pop()?.split("?")[0] || "Media Attachment"}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] uppercase font-bold text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                    {mediaType}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground truncate">
+                    Ready to send with automation
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Media Type Selector */}
+            <div className="flex items-center gap-2 pt-1">
+              <label className="text-[11px] text-muted-foreground">Type:</label>
+              {(["image", "document", "video", "audio"] as const).map((tVal) => (
+                <button
+                  key={tVal}
+                  type="button"
+                  onClick={() => set({ media_type: tVal })}
+                  className={cn(
+                    "px-2 py-0.5 text-[10px] rounded border font-medium capitalize transition-colors",
+                    mediaType === tVal
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted text-muted-foreground border-border hover:text-foreground"
+                  )}
+                >
+                  {tVal}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <label className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-md border border-dashed border-border/80 bg-muted/30 hover:bg-muted/60 text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
+                {isUploading ? (
+                  <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4 text-primary" />
+                )}
+                <span>{isUploading ? "Uploading to secure CRM storage..." : "Click to upload Image, Banner, or PDF"}</span>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf,video/*,audio/*"
+                  onChange={handleUpload}
+                  disabled={isUploading}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            <div className="relative">
+              <Input
+                value={mediaUrl}
+                onChange={(e) => {
+                  const val = e.target.value.trim()
+                  let autoType = "image"
+                  if (val.toLowerCase().includes(".pdf")) autoType = "document"
+                  else if (val.toLowerCase().match(/\.(mp4|mov|avi)$/i)) autoType = "video"
+                  else if (val.toLowerCase().match(/\.(mp3|ogg|wav)$/i)) autoType = "audio"
+                  set({ media_url: val, media_type: val ? autoType : undefined })
+                }}
+                placeholder="Or paste direct public media URL (https://...)"
+                className="h-8 text-xs bg-muted"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function StepEditor({
   step,
   onChange,
@@ -1401,16 +1573,7 @@ function StepEditor({
 
   switch (step.step_type) {
     case "send_message":
-      return (
-        <FieldBlock label={t("config.messageText")}>
-          <Textarea
-            value={(cfg.text as string) ?? ""}
-            onChange={(e) => set({ text: e.target.value })}
-            placeholder={t("config.placeholderMessageText")}
-            className="min-h-24 bg-muted text-foreground"
-          />
-        </FieldBlock>
-      )
+      return <SendMessageStepFields cfg={cfg} set={set} t={t} />
     case "send_buttons":
     case "send_list":
       // The whole step_config IS the interactive payload; the shared
@@ -1615,15 +1778,22 @@ function previewFor(
   t: ReturnType<typeof useTranslations>,
 ): string {
   switch (step.step_type) {
-    case "send_message":
-      return (step.step_config.text as string) || t("preview.noText")
+    case "send_message": {
+      const media = step.step_config.media_url
+        ? `[${String(step.step_config.media_type || "media").toUpperCase()}] `
+        : ""
+      const text = (step.step_config.text as string) || (step.step_config.media_url ? "Attached Media" : t("preview.noText"))
+      return `${media}${text}`
+    }
     case "send_buttons":
     case "send_list": {
+      const hasMedia = Boolean((step.step_config as any).media_url)
       const preview =
         interactivePayloadPreviewText(asInteractive(step.step_config)) || t("preview.noBody")
+      const mediaPrefix = hasMedia ? "📷 " : ""
       return step.step_config.wait_for_reply
-        ? t("preview.withWaitForReply", { preview })
-        : preview
+        ? t("preview.withWaitForReply", { preview: `${mediaPrefix}${preview}` })
+        : `${mediaPrefix}${preview}`
     }
     case "send_template":
       return (step.step_config.template_name as string) || t("preview.pickTemplate")

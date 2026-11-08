@@ -545,6 +545,9 @@ export type AutomationTriggerConfig =
 
 export interface SendMessageStepConfig {
   text: string;
+  media_url?: string;
+  media_type?: 'image' | 'video' | 'document' | 'audio';
+  file_name?: string;
 }
 
 /**

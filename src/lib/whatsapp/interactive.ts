@@ -40,6 +40,9 @@ export interface InteractiveButtonsPayload {
   footer?: string
   /** 1–3 buttons. */
   buttons: InteractiveButton[]
+  /** Optional media header (image / video / document) */
+  media_url?: string
+  media_type?: 'image' | 'video' | 'document'
 }
 
 export interface InteractiveListRow {
@@ -66,6 +69,9 @@ export interface InteractiveListPayload {
   button_label: string
   /** 1–10 rows TOTAL across all sections. */
   sections: InteractiveListSection[]
+  /** Optional media header (image / video / document) */
+  media_url?: string
+  media_type?: 'image' | 'video' | 'document'
 }
 
 export interface InteractiveCarouselCardButton {
@@ -92,6 +98,8 @@ export interface InteractiveCarouselPayload {
   body: string
   header?: string
   footer?: string
+  media_url?: string
+  media_type?: 'image' | 'video' | 'document'
   cards: InteractiveCarouselCard[]
 }
 

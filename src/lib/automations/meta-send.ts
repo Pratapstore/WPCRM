@@ -1,4 +1,4 @@
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { sendTextMessage, sendMediaMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { formatProductCarouselWhatsAppMessage } from '@/lib/products/format-product-message'
 import {
@@ -49,7 +49,10 @@ interface SendTextArgs {
   userId: string
   conversationId: string
   contactId: string
-  text: string
+  text?: string
+  mediaUrl?: string
+  mediaType?: 'image' | 'video' | 'document' | 'audio'
+  fileName?: string
 }
 
 interface SendTemplateArgs {
@@ -101,6 +104,8 @@ export async function engineSendInteractive(
       ...common,
       bodyText: payload.body,
       headerText: payload.header,
+      headerImage: payload.media_url,
+      mediaUrl: payload.media_url,
       footerText: payload.footer,
       buttons: payload.buttons,
     })
@@ -111,6 +116,7 @@ export async function engineSendInteractive(
       bodyText: payload.body,
       buttonLabel: payload.button_label,
       headerText: payload.header,
+      mediaUrl: payload.media_url,
       footerText: payload.footer,
       sections: payload.sections,
     })
@@ -210,7 +216,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       waMessageId = res.messageId
     } else {
       const res = await sendBaileysMessage(input.accountId, sanitized, {
-        text: input.text,
+        text: input.text || undefined,
+        mediaUrl: input.mediaUrl || undefined,
+        fileName: input.fileName || undefined,
+        caption: input.text || undefined,
       })
       waMessageId = res.messageId
     }
@@ -241,7 +250,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
           waMessageId = res.messageId
         } else {
           const res = await sendBaileysMessage(input.accountId, sanitized, {
-            text: input.text,
+            text: input.text || undefined,
+            mediaUrl: input.mediaUrl || undefined,
+            fileName: input.fileName || undefined,
+            caption: input.text || undefined,
           })
           waMessageId = res.messageId
         }
@@ -262,11 +274,23 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
           })
           return r.messageId
         }
+        if (input.mediaUrl) {
+          const r = await sendMediaMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            kind: input.mediaType || 'image',
+            link: input.mediaUrl,
+            caption: input.text || undefined,
+            filename: input.fileName || undefined,
+          })
+          return r.messageId
+        }
         const r = await sendTextMessage({
           phoneNumberId: config.phone_number_id,
           accessToken,
           to: phone,
-          text: input.text,
+          text: input.text || '',
         })
         return r.messageId
       }
@@ -297,15 +321,22 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Persist the sent message so it appears in the inbox with a real
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
-  const content_type = input.kind === 'template' ? 'template' : 'text'
+  const mediaUrl = input.kind === 'text' ? input.mediaUrl : undefined
+  const mediaType = input.kind === 'text' ? input.mediaType : undefined
+  const content_type =
+    input.kind === 'template'
+      ? 'template'
+      : mediaUrl
+      ? mediaType || 'image'
+      : 'text'
   const template_name = input.kind === 'template' ? input.templateName : null
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
     content_type,
-    content_text,
-    media_url: templateHeaderMediaUrl(templateRow),
+    content_text: content_text || '',
+    media_url: mediaUrl || templateHeaderMediaUrl(templateRow) || null,
     template_name,
     message_id: waMessageId,
     status: 'sent',
@@ -322,6 +353,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       last_message_text:
         input.kind === 'template'
           ? (content_text ?? `[template:${input.templateName}]`)
+          : mediaUrl
+          ? `[${(mediaType || 'Media').toUpperCase()}] ${input.text || ''}`.trim()
           : input.text,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

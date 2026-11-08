@@ -355,6 +355,9 @@ interface SendInteractiveButtonsEngineArgs {
   bodyText: string
   buttons: InteractiveButton[]
   headerText?: string
+  headerImage?: string
+  mediaUrl?: string
+  mediaType?: 'image' | 'video' | 'document'
   footerText?: string
 }
 
@@ -367,6 +370,9 @@ interface SendInteractiveListEngineArgs {
   buttonLabel: string
   sections: InteractiveListSection[]
   headerText?: string
+  headerImage?: string
+  mediaUrl?: string
+  mediaType?: 'image' | 'video' | 'document'
   footerText?: string
 }
 
@@ -473,11 +479,14 @@ async function sendInteractiveViaMeta(
     return parts.join('\n\n')
   }
 
+  const effectiveMedia = input.mediaUrl || (input.kind === 'buttons' ? input.headerImage : undefined)
+
   if (isBaileys) {
     const res = await sendBaileysMessage(input.accountId, sanitized, {
       text: input.bodyText,
       headerText: input.headerText,
       footerText: input.footerText,
+      mediaUrl: effectiveMedia,
       buttons: input.kind === 'buttons' ? input.buttons : undefined,
       listConfig:
         input.kind === 'list'
@@ -498,6 +507,7 @@ async function sendInteractiveViaMeta(
           text: input.bodyText,
           headerText: input.headerText,
           footerText: input.footerText,
+          mediaUrl: effectiveMedia,
           buttons: input.kind === 'buttons' ? input.buttons : undefined,
           listConfig:
             input.kind === 'list'
@@ -523,7 +533,8 @@ async function sendInteractiveViaMeta(
             to: phone,
             bodyText: input.bodyText,
             buttons: input.buttons,
-            headerText: input.headerText,
+            headerText: !effectiveMedia ? input.headerText : undefined,
+            headerImage: effectiveMedia,
             footerText: input.footerText,
           })
           return r.messageId
@@ -585,6 +596,8 @@ async function sendInteractiveViaMeta(
           kind: 'buttons',
           body: input.bodyText,
           header: input.headerText,
+          media_url: effectiveMedia,
+          media_type: input.mediaType || (effectiveMedia ? 'image' : undefined),
           footer: input.footerText,
           buttons: input.buttons,
         }
@@ -592,6 +605,8 @@ async function sendInteractiveViaMeta(
           kind: 'list',
           body: input.bodyText,
           header: input.headerText,
+          media_url: effectiveMedia,
+          media_type: input.mediaType || (effectiveMedia ? 'image' : undefined),
           footer: input.footerText,
           button_label: input.buttonLabel,
           sections: input.sections,
@@ -603,6 +618,7 @@ async function sendInteractiveViaMeta(
     content_type: 'interactive',
     content_text: input.bodyText,
     interactive_payload: interactivePayload,
+    media_url: effectiveMedia || null,
     message_id: waMessageId,
     status: 'sent',
   })

@@ -191,6 +191,29 @@ export function InteractivePreview({
         className,
       )}
     >
+      {payload.media_url ? (
+        <div className="relative w-full max-h-40 bg-black/40 overflow-hidden flex items-center justify-center border-b border-border/60">
+          {payload.media_url.toLowerCase().includes('.pdf') ? (
+            <div className="p-3 text-center">
+              <Package className="w-7 h-7 text-red-400 mx-auto mb-0.5" />
+              <span className="text-[10px] text-muted-foreground">PDF Document</span>
+            </div>
+          ) : payload.media_url.toLowerCase().match(/\.(mp4|mov|avi|mkv)$/i) ? (
+            <div className="p-3 text-center">
+              <Package className="w-7 h-7 text-blue-400 mx-auto mb-0.5" />
+              <span className="text-[10px] text-muted-foreground">Video Header</span>
+            </div>
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={payload.media_url}
+              alt={payload.header || "Interactive header"}
+              className="w-full h-auto max-h-40 object-cover"
+            />
+          )}
+        </div>
+      ) : null}
+
       <div className="px-3 py-2">
         {payload.header ? (
           <p className="mb-1 break-words text-sm font-semibold">
