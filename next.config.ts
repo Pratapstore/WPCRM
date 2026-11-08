@@ -101,8 +101,8 @@ const nextConfig: NextConfig = {
   },
   // Emit a self-contained server bundle (.next/standalone) so the
   // Docker image can run without node_modules or the Next CLI.
-  // Harmless outside Docker: `next start` keeps working as before.
-  output: "standalone",
+  // When deploying on Vercel, use standard Vercel serverless output.
+  output: process.env.VERCEL ? undefined : "standalone",
   experimental: {
     turbopackPluginRuntimeStrategy: "workerThreads",
   },
