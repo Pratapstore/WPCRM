@@ -413,6 +413,49 @@ export async function requeueStalledExecutions(now: Date = new Date()): Promise<
   return (data ?? []).length
 }
 
+/**
+ * Drain and process due pending executions (run_at <= now).
+ * Can be called by cron, background workers, or opportunistically by webhooks.
+ */
+export async function drainDuePendingExecutions(limit = 25): Promise<number> {
+  const admin = supabaseAdmin()
+  const { data: due, error } = await admin
+    .from('automation_pending_executions')
+    .select('*')
+    .eq('status', 'pending')
+    .lte('run_at', new Date().toISOString())
+    .order('run_at', { ascending: true })
+    .limit(limit)
+
+  if (error || !due || due.length === 0) return 0
+
+  let processed = 0
+  for (const row of due) {
+    if (!(await claimPendingExecution(row.id as string))) continue
+
+    try {
+      await resumePendingExecution({
+        id: row.id as string,
+        automation_id: row.automation_id as string,
+        account_id: row.account_id as string,
+        user_id: row.user_id as string,
+        contact_id: (row.contact_id as string | null) ?? null,
+        log_id: (row.log_id as string | null) ?? null,
+        parent_step_id: (row.parent_step_id as string | null) ?? null,
+        branch: (row.branch as 'yes' | 'no' | null) ?? null,
+        next_step_position: row.next_step_position as number,
+        parked_step_id: (row.parked_step_id as string | null) ?? null,
+        context: (row.context as AutomationContext) ?? {},
+      })
+      processed++
+    } catch (err) {
+      console.error('[automations] drain error on row', row.id, err)
+    }
+  }
+
+  return processed
+}
+
 // ------------------------------------------------------------
 // Internal execution
 // ------------------------------------------------------------
@@ -526,27 +569,32 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
 
   for (const step of steps as AutomationStep[]) {
     // `wait` is the suspension point: enqueue and stop processing this
-    // scope. The cron endpoint will pick it up later.
+    // scope. The in-process timer, webhook drain, or cron endpoint will pick it up.
     if (step.step_type === 'wait') {
       const cfg = step.step_config as WaitStepConfig
       const ms = waitMs(cfg)
-      const { error: waitErr } = await db.from('automation_pending_executions').insert({
-        automation_id: args.automation.id,
-        // Tenancy: account_id required NOT NULL post-017.
-        account_id: args.automation.account_id,
-        user_id: args.automation.user_id,
-        contact_id: args.contactId,
-        log_id: args.logId,
-        parent_step_id: args.parentStepId,
-        branch: args.branch,
-        next_step_position: step.position + 1,
-        parked_step_id: step.id,
-        context: args.context,
-        run_at: new Date(Date.now() + ms).toISOString(),
-        status: 'pending',
-      })
-      if (waitErr) {
-        errorMessage = tErr('scheduleWaitFailed', { message: waitErr.message })
+      const { data: insertedWait, error: waitErr } = await db
+        .from('automation_pending_executions')
+        .insert({
+          automation_id: args.automation.id,
+          // Tenancy: account_id required NOT NULL post-017.
+          account_id: args.automation.account_id,
+          user_id: args.automation.user_id,
+          contact_id: args.contactId,
+          log_id: args.logId,
+          parent_step_id: args.parentStepId,
+          branch: args.branch,
+          next_step_position: step.position + 1,
+          parked_step_id: step.id,
+          context: args.context,
+          run_at: new Date(Date.now() + ms).toISOString(),
+          status: 'pending',
+        })
+        .select('id')
+        .single()
+
+      if (waitErr || !insertedWait) {
+        errorMessage = tErr('scheduleWaitFailed', { message: waitErr?.message || 'Insert failed' })
         results.push({
           step_id: step.id,
           step_type: step.step_type,
@@ -556,6 +604,34 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
         status = 'failed'
         break
       }
+
+      // Schedule in-memory timer for short waits (up to 15 minutes)
+      // so the next message triggers automatically without needing external cron!
+      if (ms <= 15 * 60 * 1000) {
+        const pendingId = insertedWait.id
+        setTimeout(async () => {
+          try {
+            if (await claimPendingExecution(pendingId)) {
+              await resumePendingExecution({
+                id: pendingId,
+                automation_id: args.automation.id,
+                account_id: args.automation.account_id,
+                user_id: args.automation.user_id,
+                contact_id: args.contactId,
+                log_id: args.logId,
+                parent_step_id: args.parentStepId,
+                branch: args.branch,
+                next_step_position: step.position + 1,
+                parked_step_id: step.id,
+                context: args.context,
+              })
+            }
+          } catch (timerErr) {
+            console.error('[automations] wait timer auto-resume error:', timerErr)
+          }
+        }, ms)
+      }
+
       results.push({
         step_id: step.id,
         step_type: step.step_type,
@@ -614,6 +690,17 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
         status: 'success',
         detail,
       })
+
+      // Pacing delay between consecutive sends so Meta processes each message
+      // and delivers them to the customer in clean, strict chronological order
+      if (
+        step.step_type === 'send_message' ||
+        step.step_type === 'send_buttons' ||
+        step.step_type === 'send_list' ||
+        step.step_type === 'send_template'
+      ) {
+        await new Promise((r) => setTimeout(r, 800))
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       results.push({

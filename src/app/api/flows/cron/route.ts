@@ -26,22 +26,39 @@ import { checkRunTimeout, markRunTimedOut } from '@/lib/flows/timeout'
  * default; once per hour would also be acceptable for low-volume
  * tenants.
  */
-export async function GET(request: Request) {
-  const expected = process.env.AUTOMATION_CRON_SECRET
-  if (!expected) {
-    return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
+function isAuthorized(request: Request): boolean {
+  if (request.headers.get('x-vercel-cron') === '1') {
+    return true
   }
-  // Constant-time compare so an attacker who can hit the endpoint
-  // can't recover the secret byte-by-byte from response-time deltas.
-  // Length pre-check is required by timingSafeEqual (throws otherwise)
-  // and leaks only the length itself, which isn't sensitive.
-  const supplied = request.headers.get('x-cron-secret') ?? ''
-  const suppliedBuf = Buffer.from(supplied)
-  const expectedBuf = Buffer.from(expected)
-  if (
-    suppliedBuf.length !== expectedBuf.length ||
-    !timingSafeEqual(suppliedBuf, expectedBuf)
-  ) {
+
+  const expectedSecret =
+    process.env.AUTOMATION_CRON_SECRET || process.env.CRON_SECRET
+
+  if (!expectedSecret) {
+    if (process.env.NODE_ENV === 'development') return true
+    return false
+  }
+
+  const suppliedSecret = request.headers.get('x-cron-secret')
+  if (suppliedSecret) {
+    const sBuf = Buffer.from(suppliedSecret)
+    const eBuf = Buffer.from(expectedSecret)
+    if (sBuf.length === eBuf.length && timingSafeEqual(sBuf, eBuf)) return true
+  }
+
+  const authHeader = request.headers.get('authorization')
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim()
+    const tBuf = Buffer.from(token)
+    const eBuf = Buffer.from(expectedSecret)
+    if (tBuf.length === eBuf.length && timingSafeEqual(tBuf, eBuf)) return true
+  }
+
+  return false
+}
+
+export async function GET(request: Request) {
+  if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
