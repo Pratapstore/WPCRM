@@ -607,9 +607,9 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
 
       // For short waits (up to 1 minute, e.g. 1 min / 30s / 10s):
       // Next.js after() keeps the serverless container alive for up to maxDuration (60s).
-      // We sleep 45s for a 1-minute wait so the entire execution cleanly completes well before Vercel's 60s limit.
+      // We sleep 35s for a 1-minute wait so the entire execution cleanly completes with a safe 25s headroom before Vercel's 60s limit.
       if (ms <= 60_000) {
-        const inlineWaitMs = Math.min(ms, 45_000)
+        const inlineWaitMs = Math.min(ms, 35_000)
         await new Promise((resolve) => setTimeout(resolve, inlineWaitMs))
 
         // Claim and mark done in the DB so background cron/webhooks won't duplicate it
